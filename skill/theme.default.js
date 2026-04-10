@@ -7,30 +7,31 @@ module.exports = {
     logoPath: null,
   },
   palette: {
-    canvas: "08142E",
-    surface: "1C2C47",
-    surfaceAlt: "13243E",
-    surfaceStrong: "233A5C",
-    border: "2D476D",
-    brand: "08142E",
-    brandSoft: "06B6D4",
-    textStrong: "F1F5F9",
-    textBody: "DCE5F1",
-    textMuted: "9FB0C8",
-    textSubtle: "7F93AE",
-    positive: "22D3A6",
-    positiveSoft: "0B3A35",
-    caution: "FBBF24",
-    cautionSoft: "4B3812",
-    critical: "FF5D6C",
-    criticalSoft: "4F1E2A",
-    neutral: "B4C4DA",
-    neutralSoft: "243A5A",
+    canvas: "0A0F1A", // Deep Obsidian Black
+    surface: "161E31", // Premium Dark Blue-Grey
+    surfaceAlt: "101626", // Slightly darker surface
+    surfaceStrong: "212D45",
+    border: "293753",
+    brand: "0A0F1A", // Matches canvas
+    brandSoft: "00F0FF", // Neon Cyan Accent
+    brandAccent: "8533FF", // Neon Violet Accent
+    textStrong: "FFFFFF",
+    textBody: "DFE6F5",
+    textMuted: "94A3B8",
+    textSubtle: "64748B",
+    positive: "10B981", // Rich Emerald
+    positiveSoft: "064E3B",
+    caution: "F59E0B", // Vibrant Amber
+    cautionSoft: "78350F",
+    critical: "EF4444", // Crisp Red
+    criticalSoft: "7F1D1D",
+    neutral: "94A3B8",
+    neutralSoft: "1E293B",
   },
   typography: {
-    title: "Aptos Display",
-    heading: "Aptos Display",
-    body: "Aptos",
+    title: "Inter",
+    heading: "Inter",
+    body: "Inter",
     mono: "Consolas",
   },
   spacing: {
@@ -41,20 +42,29 @@ module.exports = {
     xl: 0.36,
   },
   radii: {
-    sm: 0.02,
-    md: 0.04,
-    pill: 0.08,
+    sm: 0.04,
+    md: 0.08,
+    lg: 0.12,
+    pill: 0.2,
+  },
+  effects: {
+    glass: {
+      transparency: 70,
+      shadow: { type: "outer", color: "000000", opacity: 0.45, blur: 15, offset: 4, angle: 90 }
+    },
+    shadowSm: { type: "outer", color: "000000", opacity: 0.3, blur: 8, offset: 2, angle: 90 },
+    shadowLg: { type: "outer", color: "000000", opacity: 0.6, blur: 20, offset: 8, angle: 90 }
   },
   accents: {
     severity: {
-      high: "B42318",
-      medium: "B54708",
-      low: "344054",
+      high: "EF4444",
+      medium: "F59E0B",
+      low: "3B82F6",
     },
     state: {
-      enabled: "027A48",
-      report_only: "B54708",
-      disabled: "B42318",
+      enabled: "10B981",
+      report_only: "F59E0B",
+      disabled: "EF4444",
     },
   },
 };
