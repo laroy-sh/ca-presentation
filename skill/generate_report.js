@@ -16,13 +16,13 @@ let _skipGuidSanitize = false;
 const CONTENT_LIMITS = {
   executiveCardsPerSlide: 4,
   roadmapItemsPerColumn: 5,
-  categoryCardsPerSlide: 6,
+  categoryCardsPerSlide: 12,
   layerCardsPerSlide: 3,
   riskCardsPerSlide: 3,
   authCardsPerSlide: 4,
   tableRows: {
     mfa: 7,
-    pim: 10,
+    pim: 8,
     reportOnly: 9,
     msManaged: 8,
     matrix: 14,
@@ -1290,7 +1290,7 @@ function addPolicyLandscapeSlides(ctx, analysis) {
     ];
 
     barData.forEach((item, index) => {
-      const y = startY + (index * 0.37);
+      const y = startY + (index * 0.32);
       const width = clamp((item.value / Math.max(1, policyCount)) * 4.5, 0.3, 4.5);
       const tone = getToneColors(ctx.theme, item.tone);
       slide.addText(item.label, {
@@ -1325,15 +1325,15 @@ function addPolicyLandscapeSlides(ctx, analysis) {
       });
     });
 
-    const cardY = startY + 1.25;
+    const cardY = startY + 1.05;
     const cardW = (SLIDE.W - (SLIDE.M * 2) - 0.25) / 3;
-    const cardH = 1.2;
+    const cardH = 0.72;
     page.forEach((category, index) => {
       const row = Math.floor(index / 3);
       const col = index % 3;
       addInsightCard(slide, ctx, {
         x: SLIDE.M + (col * (cardW + 0.125)),
-        y: cardY + (row * (cardH + 0.15)),
+        y: cardY + (row * (cardH + 0.08)),
         w: cardW,
         h: cardH,
         title: sanitizeText(category.label, 36).replace(/\n/g, " "),
@@ -1479,7 +1479,7 @@ function addRiskPolicySlides(ctx, analysis) {
         x: SLIDE.M + (index * (cardW + gap)),
         y: startY,
         w: cardW,
-        h: 2.95,
+        h: 2.55,
         title: sanitizeText(item.title, 38),
         takeaway: sanitizeText(item.policyName, 60),
         evidence,
@@ -1490,9 +1490,9 @@ function addRiskPolicySlides(ctx, analysis) {
     if (pageIndex === 0 && risk.callout) {
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
-        y: 4.45,
+        y: startY + 2.55 + 0.18,
         w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.65,
+        h: 0.58,
         title: "Risk takeaway",
         text: sanitizeText(risk.callout.text, 160),
         tone: getSeverityTone(risk.callout.color),
@@ -1568,8 +1568,10 @@ function addPimCoverageSlides(ctx, analysis) {
       { label: "CA coverage" },
       { label: "Direct", align: "center" },
     ];
-    const tableRowH = 0.27;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.95);
+    const hasCallout = pageIndex === 0 && hasValue(pim.note);
+    const tableRowH = 0.24;
+    const maxTableH = hasCallout ? 2.6 : 3.2;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, maxTableH);
 
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
@@ -1581,15 +1583,15 @@ function addPimCoverageSlides(ctx, analysis) {
       rowH: tableRowH,
     });
 
-    if (pageIndex === 0 && hasValue(pim.note)) {
-      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+    if (hasCallout) {
+      const calloutY = startY + tableH + 0.18;
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
         w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.72,
+        h: 0.55,
         title: "Coverage note",
-        text: sanitizeText(pim.note, 170),
+        text: sanitizeText(pim.note, 140),
         tone: "neutral",
       });
     }
@@ -1681,8 +1683,9 @@ function addMsManagedOverlapSlides(ctx, analysis) {
       { label: "Custom equivalent" },
       { label: "Overlap", align: "center" },
     ];
-    const tableRowH = 0.28;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.9);
+    const tableRowH = 0.25;
+    const maxTableH = (pageIndex === 0 && overlap.callout) ? 2.4 : 3.2;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, maxTableH);
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
       y: startY,
@@ -1694,12 +1697,12 @@ function addMsManagedOverlapSlides(ctx, analysis) {
     });
 
     if (pageIndex === 0 && overlap.callout) {
-      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      const calloutY = startY + tableH + 0.18;
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
         w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.72,
+        h: 0.65,
         title: sanitizeText(overlap.callout.title, 64),
         text: sanitizeText(overlap.callout.text, 170),
         tone: "critical",
