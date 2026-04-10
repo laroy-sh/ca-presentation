@@ -1,29 +1,46 @@
 # CA Documenter
 
-CA Documenter turns Microsoft Entra Conditional Access exports into a client-ready executive presentation with supporting appendix detail.
+Stop spending hours manually building Conditional Access review decks. CA Documenter reads your Microsoft Entra CA policy exports and generates a polished, executive-ready PowerPoint presentation — complete with posture scoring, prioritized recommendations, and per-policy detail breakdowns.
+
+## The Problem
+
+Reviewing Conditional Access policies means digging through JSON exports, cross-referencing grant controls, session controls, user scopes, and app targets across dozens of policies. Turning that into something a CISO or client stakeholder can act on takes hours of slide-building every engagement.
+
+## What This Does
+
+CA Documenter takes your raw policy export and a structured analysis, then generates a 30+ slide presentation that covers:
+
+- **Posture scorecard** with enforcement state distribution
+- **Executive summary** with strengths, concerns, and top priorities
+- **90-day roadmap** with near-term and mid-term actions
+- **Supporting analysis** across MFA, geolocation, risk controls, auth strengths, PIM coverage, report-only pipeline, and Microsoft-managed overlap
+- **Full policy matrix** for audit reference
+- **Per-policy detail slides** showing users, apps, conditions, grant controls, and session controls at a glance
+
+The output is themed, paginated, and structured for executive decisions first, evidence second, appendix last.
 
 ## Who It Is For
 
-- Security consultants delivering posture briefings
+- Security consultants delivering CA posture briefings
 - Internal IAM teams preparing stakeholder updates
-- Managed service teams standardizing CA review output
+- Managed service providers standardizing CA review deliverables
 
-## Inputs
+## Sample Output
 
-Required:
-- `policies.json` (Graph envelope, array, or normalized policy list)
+### Cover
+![Cover slide](docs/previews/slide-01.jpg)
 
-Optional enrichment:
-- Named locations
-- Authentication strengths
-- PIM role assignments
+### Posture Scorecard
+![Scorecard](docs/previews/slide-03.jpg)
 
-Analysis is captured in `analysis.json` using [`skill/analysis-schema.md`](skill/analysis-schema.md).
+### Top Priorities
+![Top priorities](docs/previews/slide-05.jpg)
 
-## Output
+### Policy Detail — Block
+![Policy detail block](docs/previews/slide-19.jpg)
 
-- Executive-first PowerPoint deck (`.pptx`)
-- Optional PDF + JPG slide previews via QA render workflow
+### Policy Detail — Grant
+![Policy detail grant](docs/previews/slide-20.jpg)
 
 ## Quick Start
 
@@ -39,25 +56,37 @@ npm run qa:render
 npm run qa:slides
 ```
 
-## Sample Slides
+## Inputs
 
-After running `npm run qa:render`, preview images are written to `docs/previews/`.
+Required:
+- `policies.json` — Graph API envelope, raw array, or normalized policy list
 
-![Sample slide 1](docs/previews/slide-01.jpg)
-![Sample slide 2](docs/previews/slide-02.jpg)
-![Sample slide 3](docs/previews/slide-03.jpg)
-![Sample slide 4](docs/previews/slide-04.jpg)
+Optional enrichment (included in `analysis.json`):
+- Named locations
+- Authentication strengths
+- PIM role assignments
 
-## Sample Output Bundle
+The analysis structure is defined in [`skill/analysis-schema.md`](skill/analysis-schema.md).
 
-- PPTX: `examples/sample/CA_Security_Posture_Report.sample.pptx`
-- PDF (if `soffice` available): `examples/sample/CA_Security_Posture_Report.sample.pdf`
-- Previews (if `pdftoppm` available): `docs/previews/slide-*.jpg`
+## Output
+
+- Themed PowerPoint deck (`.pptx`) — ready to present or share
+- Optional PDF + JPG slide previews via QA render workflow (`soffice` + `pdftoppm`)
+
+## Theming
+
+Pass a custom JSON theme file to override colors, fonts, spacing, and metadata:
+
+```bash
+node skill/generate_report.js --theme my-theme.json
+```
+
+See [`skill/theme.default.js`](skill/theme.default.js) for the full set of tokens.
 
 ## Key Project Files
 
-- [`skill/generate_report.js`](skill/generate_report.js): themed presentation generator
-- [`skill/theme.default.js`](skill/theme.default.js): default visual theme tokens
-- [`skill/SKILL.md`](skill/SKILL.md): analysis workflow instructions
-- [`skill/analysis-schema.md`](skill/analysis-schema.md): analysis contract
-- [`skill/examples/`](skill/examples): sanitized sample inputs
+- [`skill/generate_report.js`](skill/generate_report.js) — themed presentation generator
+- [`skill/theme.default.js`](skill/theme.default.js) — default visual theme tokens
+- [`skill/SKILL.md`](skill/SKILL.md) — analysis workflow instructions
+- [`skill/analysis-schema.md`](skill/analysis-schema.md) — analysis JSON contract
+- [`skill/examples/`](skill/examples) — sanitized sample inputs
