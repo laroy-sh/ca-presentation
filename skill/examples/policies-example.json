@@ -1,0 +1,252 @@
+[
+  {
+    "id": "p-001",
+    "name": "Legacy authentication block",
+    "state": "enabled",
+    "lastModified": "2025-03-04",
+    "users": {
+      "includeUsers": "All users",
+      "excludeUsers": "Break glass account"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "clientApps": "exchangeActiveSync, other"
+    },
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["block"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-002",
+    "name": "MFA - All users",
+    "state": "enabled",
+    "lastModified": "2025-04-18",
+    "users": {
+      "includeUsers": "All users",
+      "excludeGroups": "Service Accounts"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "locationsExclude": "Trusted office networks",
+      "clientApps": "browser, mobileAppsAndDesktopClients"
+    },
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["mfa"]
+    },
+    "sessionControls": {
+      "signInFrequency": "14 days"
+    }
+  },
+  {
+    "id": "p-003",
+    "name": "MFA - Privileged roles",
+    "state": "enabled",
+    "lastModified": "2025-06-01",
+    "users": {
+      "includeRoles": "Global Administrator, Security Administrator"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "locationsInclude": "All locations"
+    },
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["mfa"],
+      "authStrength": "Standard workforce MFA"
+    },
+    "sessionControls": {
+      "signInFrequency": "7 days"
+    }
+  },
+  {
+    "id": "p-004",
+    "name": "Risky Users - High",
+    "state": "enabled",
+    "lastModified": "2024-11-19",
+    "users": {
+      "includeUsers": "All users"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "risk": "high"
+    },
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["mfa", "passwordChange"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-005",
+    "name": "Risky Sign-ins",
+    "state": "enabled",
+    "lastModified": "2025-01-10",
+    "users": {
+      "includeUsers": "All users"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "risk": "high"
+    },
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["mfa"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-006",
+    "name": "Geolocation catch-all block",
+    "state": "enabled",
+    "lastModified": "2025-02-14",
+    "users": {
+      "includeUsers": "All users"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {
+      "locationsExclude": "CA, US, UK",
+      "locationsInclude": "All"
+    },
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["block"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-007",
+    "name": "Device registration control",
+    "state": "enabled",
+    "lastModified": "2025-05-20",
+    "users": {
+      "includeUsers": "All users"
+    },
+    "applications": {
+      "userActions": "registerOrJoinDevices"
+    },
+    "conditions": {
+      "platforms": "all"
+    },
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["mfa", "compliantDevice"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-008",
+    "name": "Token protection rollout",
+    "state": "report_only",
+    "lastModified": "2025-08-05",
+    "users": {
+      "includeUsers": "All users"
+    },
+    "applications": {
+      "include": "Office 365 Exchange Online, Microsoft SharePoint Online"
+    },
+    "conditions": {
+      "platforms": "windows, macOS"
+    },
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["tokenProtection", "mfa"]
+    },
+    "sessionControls": {
+      "continuousAccessEvaluation": "strictLocation"
+    }
+  },
+  {
+    "id": "p-009",
+    "name": "Admin portal geo control",
+    "state": "report_only",
+    "lastModified": "2025-09-02",
+    "users": {
+      "includeRoles": "Global Administrator, Privileged Role Administrator"
+    },
+    "applications": {
+      "include": "MicrosoftAdminPortals"
+    },
+    "conditions": {
+      "locationsExclude": "Trusted office networks"
+    },
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["block"]
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-010",
+    "name": "BYOD pilot",
+    "state": "report_only",
+    "lastModified": "2026-01-16",
+    "users": {
+      "includeGroups": "Mobile Workforce"
+    },
+    "applications": {
+      "include": "Office365"
+    },
+    "conditions": {
+      "platforms": "android, iOS"
+    },
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["mfa", "compliantDevice"]
+    },
+    "sessionControls": {
+      "signInFrequency": "8 hours"
+    }
+  },
+  {
+    "id": "p-011",
+    "name": "Microsoft-managed: Phishing-resistant MFA for admins",
+    "state": "disabled",
+    "lastModified": "2024-12-12",
+    "users": {
+      "includeRoles": "Global Administrator, Security Administrator"
+    },
+    "applications": {
+      "include": "All cloud apps"
+    },
+    "conditions": {},
+    "grantControls": {
+      "operator": "Require ALL",
+      "controls": ["mfa"],
+      "authStrength": "Passwordless Admin"
+    },
+    "sessionControls": {}
+  },
+  {
+    "id": "p-012",
+    "name": "Microsoft-managed: Require MFA for admins at admin portals",
+    "state": "disabled",
+    "lastModified": "2024-12-12",
+    "users": {
+      "includeRoles": "Global Administrator, Privileged Role Administrator"
+    },
+    "applications": {
+      "include": "MicrosoftAdminPortals"
+    },
+    "conditions": {},
+    "grantControls": {
+      "operator": "Require ONE",
+      "controls": ["mfa"]
+    },
+    "sessionControls": {}
+  }
+]
