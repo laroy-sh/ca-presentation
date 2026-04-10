@@ -68,7 +68,15 @@ Export from the Microsoft Graph API:
 GET https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies
 ```
 
-Save the response (Graph envelope, bare array, or normalized list all work). You can also use the [Microsoft Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer) or `az rest` CLI.
+Save the response (Graph envelope, bare array, or normalized list all work). You can also use the [Microsoft Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer) or the Azure CLI:
+
+```bash
+az rest --method GET \
+  --url "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies" \
+  --output json > policies.json
+```
+
+This requires the **Security Reader** or **Conditional Access Administrator** Entra role, and the `Policy.Read.All` Microsoft Graph permission.
 
 ### `analysis.json` — the structured analysis
 
