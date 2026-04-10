@@ -87,9 +87,27 @@ You can produce it:
 - **Manually** — write it by hand following the [analysis schema](skill/analysis-schema.md) and the [example](skill/examples/analysis-example.json)
 
 Optional enrichment inputs that improve the analysis:
-- Named locations JSON
-- Authentication strengths JSON
-- PIM role assignments JSON
+
+- **Named locations** — geolocation narrative (countries, trusted networks)
+  ```bash
+  az rest --method GET \
+    --url "https://graph.microsoft.com/v1.0/identity/conditionalAccess/namedLocations" \
+    --output json > named-locations.json
+  ```
+- **Authentication strengths** — auth strength analysis (phishing-resistant, passwordless, etc.)
+  ```bash
+  az rest --method GET \
+    --url "https://graph.microsoft.com/v1.0/identity/conditionalAccess/authenticationStrength/policies" \
+    --output json > auth-strengths.json
+  ```
+- **PIM role assignments** — privileged role coverage analysis
+  ```bash
+  az rest --method GET \
+    --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?\$expand=principal" \
+    --output json > pim-role-assignments.json
+  ```
+
+These use the same `az rest` authentication. Named locations and auth strengths require `Policy.Read.All`. PIM role assignments require `RoleManagement.Read.Directory`.
 
 ## Output
 
