@@ -528,22 +528,12 @@ function resolveLogoPath(logoPath, themeLogoPath, projectDir) {
 }
 
 function addDeckBackground(slide, ctx) {
-  slide.addShape(ctx.pres.shapes.OVAL, {
-    x: 6.35,
-    y: -1.2,
-    w: 4.9,
-    h: 4.9,
-    fill: { color: ctx.theme.palette.brandSoft, transparency: 92 },
-    line: { color: ctx.theme.palette.brandSoft, width: 0 },
-  });
-  slide.addShape(ctx.pres.shapes.OVAL, {
-    x: 7.45,
-    y: 2.2,
-    w: 3.9,
-    h: 3.9,
-    fill: { color: ctx.theme.palette.brandSoft, transparency: 95 },
-    line: { color: ctx.theme.palette.brandSoft, width: 0 },
-  });
+  const bgPath = path.resolve(process.cwd(), "assets", "bg-slide.png");
+  if (fs.existsSync(bgPath)) {
+    slide.background = { path: bgPath };
+  } else {
+    slide.background = { color: ctx.theme.palette.brand };
+  }
 }
 
 function createSlide(ctx, options = {}) {
@@ -647,13 +637,15 @@ function addSectionSubtitle(slide, ctx, text, y = 0.73) {
 function addStatBadge(slide, ctx, options) {
   const tone = options.tone || "neutral";
   const colors = getToneColors(ctx.theme, tone);
+  const glass = ctx.theme.effects && ctx.theme.effects.glass ? ctx.theme.effects.glass : { transparency: 0, shadow: null };
   slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
     x: options.x,
     y: options.y,
     w: options.w,
     h: options.h,
-    fill: { color: colors.soft },
-    line: { color: colors.soft, width: 0.5 },
+    fill: { color: colors.soft, transparency: glass.transparency },
+    line: { color: colors.soft, width: 0 },
+    shadow: glass.shadow,
     rectRadius: ctx.theme.radii.md,
   });
   slide.addText(String(options.value), {
@@ -684,13 +676,23 @@ function addStatBadge(slide, ctx, options) {
 function addCalloutBox(slide, ctx, options) {
   const tone = options.tone || "neutral";
   const colors = getToneColors(ctx.theme, tone);
+  const glass = ctx.theme.effects && ctx.theme.effects.glass ? ctx.theme.effects.glass : { transparency: 0, shadow: null };
   slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
     x: options.x,
     y: options.y,
     w: options.w,
     h: options.h,
-    fill: { color: colors.soft },
-    line: { color: colors.strong, width: 0.8 },
+    fill: { color: colors.soft, transparency: glass.transparency },
+    line: { color: colors.strong, width: 0 },
+    shadow: glass.shadow,
+    rectRadius: ctx.theme.radii.md,
+  });
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: 0.04,
+    fill: { color: colors.strong },
     rectRadius: ctx.theme.radii.md,
   });
   if (hasValue(options.title)) {
@@ -723,22 +725,25 @@ function addCalloutBox(slide, ctx, options) {
 function addInsightCard(slide, ctx, options) {
   const tone = options.tone || "neutral";
   const colors = getToneColors(ctx.theme, tone);
+  const glass = ctx.theme.effects && ctx.theme.effects.glass ? ctx.theme.effects.glass : { transparency: 0, shadow: null };
   slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
     x: options.x,
     y: options.y,
     w: options.w,
     h: options.h,
-    fill: { color: ctx.theme.palette.surface },
-    line: { color: ctx.theme.palette.border, width: 0.75 },
+    fill: { color: ctx.theme.palette.surface, transparency: glass.transparency },
+    line: { color: ctx.theme.palette.border, width: 0 },
+    shadow: glass.shadow,
     rectRadius: ctx.theme.radii.md,
   });
-  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
     x: options.x,
     y: options.y,
-    w: 0.04,
+    w: 0.06,
     h: options.h,
     fill: { color: colors.strong },
     line: { color: colors.strong, width: 0 },
+    rectRadius: ctx.theme.radii.md,
   });
 
   slide.addText(sanitizeText(options.title, 72), {
@@ -784,22 +789,17 @@ function addInsightCard(slide, ctx, options) {
 }
 
 function addAppendixDivider(slide, ctx, title, subtitle) {
-  slide.addShape(ctx.pres.shapes.RECTANGLE, {
-    x: 0,
-    y: 0,
-    w: SLIDE.W,
-    h: SLIDE.H,
-    fill: { color: ctx.theme.palette.surfaceAlt },
-    line: { color: ctx.theme.palette.surfaceAlt, width: 0 },
-  });
-  slide.addShape(ctx.pres.shapes.RECTANGLE, {
-    x: 0,
-    y: 0,
-    w: SLIDE.W,
-    h: 0.08,
-    fill: { color: ctx.theme.palette.brand },
-    line: { color: ctx.theme.palette.brand, width: 0 },
-  });
+  const bgPath = path.resolve(process.cwd(), "assets", "bg-hero.png");
+  if (fs.existsSync(bgPath)) {
+    slide.background = { path: bgPath };
+    slide.addShape(ctx.pres.shapes.RECTANGLE, {
+      x: 0, y: 0, w: SLIDE.W, h: SLIDE.H,
+      fill: { color: "000000", transparency: 60 },
+      line: { type: "none" }
+    });
+  } else {
+    slide.background = { color: ctx.theme.palette.brand };
+  }
   slide.addText(sanitizeText(title, 48), {
     x: SLIDE.M,
     y: 2.2,
@@ -906,23 +906,17 @@ function addCoverSlide(ctx, analysis) {
   const slide = createSlide(ctx, { cover: true });
   const t = ctx.theme;
 
-  slide.background = { color: t.palette.brand };
-  slide.addShape(ctx.pres.shapes.OVAL, {
-    x: 6.4,
-    y: -1.2,
-    w: 4.8,
-    h: 4.8,
-    fill: { color: "FFFFFF", transparency: 88 },
-    line: { color: "FFFFFF", width: 0 },
-  });
-  slide.addShape(ctx.pres.shapes.OVAL, {
-    x: 7.4,
-    y: 2.2,
-    w: 3.8,
-    h: 3.8,
-    fill: { color: "FFFFFF", transparency: 92 },
-    line: { color: "FFFFFF", width: 0 },
-  });
+  const bgPath = path.resolve(process.cwd(), "assets", "bg-hero.png");
+  if (fs.existsSync(bgPath)) {
+    slide.background = { path: bgPath };
+    slide.addShape(ctx.pres.shapes.RECTANGLE, {
+      x: 0, y: 0, w: SLIDE.W, h: SLIDE.H,
+      fill: { color: "000000", transparency: 60 },
+      line: { type: "none" }
+    });
+  } else {
+    slide.background = { color: t.palette.brand };
+  }
 
   const reportTitle = pickFirst(
     analysis.meta && analysis.meta.reportTitle,
@@ -956,7 +950,7 @@ function addCoverSlide(ctx, analysis) {
     h: 0.3,
     fontFace: t.typography.body,
     fontSize: 13,
-    color: t.palette.brandSoft,
+    color: "FFFFFF",
     margin: 0,
   });
 
@@ -974,8 +968,9 @@ function addCoverSlide(ctx, analysis) {
       y: 4.35,
       w: 1.48,
       h: 0.9,
-      fill: { color: colors.soft, transparency: 15 },
-      line: { color: colors.soft, width: 0.25 },
+      fill: { color: t.palette.surface, transparency: t.effects && t.effects.glass ? t.effects.glass.transparency : 70 },
+      line: { color: t.palette.border, width: 0 },
+      shadow: t.effects && t.effects.glass ? t.effects.glass.shadow : null,
       rectRadius: t.radii.md,
     });
     slide.addText(String(badge.value), {
