@@ -1,4 +1,14 @@
 {
+  "name": "ca-documenter",
+  "version": "2.0.0",
+  "description": "Executive-first Conditional Access posture presentation generator",
+  "private": true,
+  "scripts": {
+    "generate": "node skill/generate_report.js",
+    "generate:example": "node skill/generate_report.js --analysis skill/examples/analysis-example.json --policies skill/examples/policies-example.json --output examples/sample/CA_Security_Posture_Report.sample.pptx",
+    "qa:render": "bash skill/scripts/qa-render.sh",
+    "qa:slides": "node skill/scripts/qa-slides.js"
+  },
   "dependencies": {
     "pptxgenjs": "^4.0.1"
   }

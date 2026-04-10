@@ -2,36 +2,51 @@
   "meta": {
     "date": "April 8, 2026",
     "nextReview": "Q3 2026",
-    "policyCount": 25,
-    "enabledCount": 16,
-    "reportOnlyCount": 5,
-    "disabledCount": 4,
-    "statsFooter": "45 trusted locations  •  12 PIM roles  •  4 auth strengths"
+    "policyCount": 12,
+    "enabledCount": 7,
+    "reportOnlyCount": 3,
+    "disabledCount": 2,
+    "clientName": "Northwind Trading",
+    "logoPath": null,
+    "statsFooter": "18 named locations | 6 PIM roles | 3 auth strengths"
   },
   "executiveSummary": {
     "strengths": [
-      "Legacy authentication blocked for all users",
-      "Device code flow authentication blocked",
-      "Risk-based policies cover all levels (Low-High)",
-      "Geo-blocking covers 200+ countries",
-      "MFA enforced for all users with trusted location exclusions"
+      "Legacy authentication is blocked for all users",
+      "Risk-driven controls cover high user and sign-in risk",
+      "Admin policies consistently require MFA"
     ],
     "concerns": [
-      "SMS allowed as MFA factor - phishable",
-      "5 policies in report-only for 6+ months",
-      "Phishing-resistant MFA not enforced for admins",
-      "4 Microsoft-managed policies disabled without review"
+      "Three report-only controls are older than six months",
+      "Admin MFA is not phishing-resistant in all paths",
+      "Two Microsoft-managed controls have no custom equivalent"
+    ],
+    "topPriorities": [
+      {
+        "title": "Enforce phishing-resistant methods for privileged roles",
+        "priority": "High",
+        "evidence": "Current admin policy allows standard MFA methods"
+      },
+      {
+        "title": "Move token protection control from report-only to enabled",
+        "priority": "High",
+        "evidence": "Control has been report-only since 2025-08-05"
+      },
+      {
+        "title": "Close Microsoft-managed overlap gaps with custom controls",
+        "priority": "Medium",
+        "evidence": "Two overlap rows are marked as Gap"
+      }
     ]
   },
   "policyLandscape": {
     "categories": [
-      { "label": "Geolocation\nBlocks", "count": 6, "colorKey": "teal" },
-      { "label": "MFA\nEnforcement", "count": 5, "colorKey": "green" },
-      { "label": "Risk-Based\nPolicies", "count": 3, "colorKey": "amber" },
-      { "label": "Access\nBlocking", "count": 2, "colorKey": "red" },
-      { "label": "Device &\nSession", "count": 2, "colorKey": "tealDark" },
-      { "label": "Auth\nRegistration", "count": 3, "colorKey": "muted" },
-      { "label": "Microsoft-\nManaged", "count": 4, "colorKey": "mutedDark" }
+      { "label": "Geolocation Blocks", "count": 2, "colorKey": "teal" },
+      { "label": "MFA Enforcement", "count": 3, "colorKey": "green" },
+      { "label": "Risk-Based Policies", "count": 2, "colorKey": "amber" },
+      { "label": "Access Blocking", "count": 1, "colorKey": "red" },
+      { "label": "Device and Session", "count": 1, "colorKey": "tealDark" },
+      { "label": "Microsoft-managed", "count": 3, "colorKey": "mutedDark" }
     ]
   },
   "geolocationStrategy": {
@@ -39,66 +54,64 @@
     "layers": [
       {
         "id": 1,
-        "title": "Catch-All Block",
-        "description": "Main geolocation policy blocks 200+ countries. Only approved countries are allowed.",
+        "title": "Catch-all geo block",
+        "description": "Main policy blocks non-approved countries and allows corporate regions only.",
         "accentColor": "teal"
       },
       {
         "id": 2,
-        "title": "Country-Specific Blocks",
+        "title": "Country-specific overlays",
         "countries": [
           { "name": "Country A", "state": "Enabled" },
-          { "name": "Country B", "state": "Enabled" },
-          { "name": "Country C", "state": "Enabled" },
-          { "name": "Country D", "state": "Report-Only" }
+          { "name": "Country B", "state": "Report-only" }
         ],
         "accentColor": "amber"
       },
       {
         "id": 3,
-        "title": "Trusted Office Networks (MFA Exclusion Zones)",
-        "locationCount": 45,
-        "description": "45 named locations representing corporate offices.",
+        "title": "Trusted office location exclusions",
+        "locationCount": 18,
+        "description": "Trusted office locations are excluded from some MFA challenges.",
         "accentColor": "green"
       }
     ],
-    "note": "One country-specific block remains in report-only mode."
+    "note": "One country-specific policy is still report-only."
   },
   "mfaMatrix": {
     "available": true,
     "policies": [
       {
-        "name": "MFA - Standard to all users",
-        "scope": "All users (excl. service accounts)",
+        "name": "MFA - All users",
+        "scope": "All users",
         "authStrength": "Built-in MFA",
         "frequency": "14 days",
-        "conditions": "Trusted IPs excluded"
+        "conditions": "Trusted locations excluded"
       },
       {
-        "name": "MFA - All Administrators",
-        "scope": "Admin roles (8 roles)",
+        "name": "MFA - Privileged roles",
+        "scope": "Admin roles",
         "authStrength": "Built-in MFA",
         "frequency": "7 days",
         "conditions": "All locations"
       },
       {
-        "name": "MFA - VPN Access",
+        "name": "MFA - Remote workforce",
         "scope": "All users",
-        "authStrength": "Built-in MFA",
-        "frequency": "Every time",
-        "conditions": "VPN app only"
+        "authStrength": "Custom secure MFA",
+        "frequency": "Every sign-in",
+        "conditions": "VPN and high-value apps"
       }
     ],
     "callout": {
-      "title": "Admin MFA Assessment",
-      "text": "Admin MFA uses standard strength, not phishing-resistant. Consider upgrading to FIDO2/WHfB."
+      "title": "Admin MFA posture",
+      "text": "Privileged roles should move from standard MFA to phishing-resistant methods."
     }
   },
   "riskPolicies": {
     "available": true,
     "policies": [
       {
-        "title": "High User Risk",
+        "title": "High user risk",
         "policyName": "Risky Users - High",
         "grantControl": "MFA + Password Change",
         "operator": "Require ALL",
@@ -107,112 +120,165 @@
         "accentColor": "red"
       },
       {
-        "title": "Low & Medium User Risk",
-        "policyName": "Risky Users - Low/Med",
-        "grantControl": "Require MFA",
-        "operator": "Require ONE",
-        "scope": "All users",
-        "modified": "2024-12-23",
-        "accentColor": "amber"
-      },
-      {
-        "title": "High Sign-in Risk",
+        "title": "High sign-in risk",
         "policyName": "Risky Sign-ins",
         "grantControl": "Require MFA",
         "operator": "Require ONE",
         "scope": "All users",
-        "modified": "2024-12-23",
+        "modified": "2025-01-10",
         "accentColor": "teal"
       }
     ],
     "callout": {
-      "text": "Full Risk Coverage - All user risk and sign-in risk levels protected. High-risk users must change password.",
-      "color": "green"
+      "text": "Risk controls are present but privileged user coverage can be tightened.",
+      "color": "amber"
     }
   },
   "authStrengths": {
-    "available": false,
-    "strengths": []
+    "available": true,
+    "strengths": [
+      {
+        "name": "Passwordless Admin",
+        "rating": "Strongest",
+        "ratingColor": "teal",
+        "type": "Custom",
+        "methods": "fido2, windowsHelloForBusiness",
+        "note": "Recommended baseline for privileged roles"
+      },
+      {
+        "name": "Standard Workforce",
+        "rating": "Strong",
+        "ratingColor": "green",
+        "type": "Built-in",
+        "methods": "authenticatorPush, softwareOath",
+        "note": "General user coverage is adequate"
+      },
+      {
+        "name": "Legacy Exception",
+        "rating": "Weak",
+        "ratingColor": "red",
+        "type": "Custom",
+        "methods": "sms",
+        "note": "Should be retired from admin-facing flows"
+      }
+    ]
   },
   "pimCoverage": {
-    "available": false,
-    "roles": [],
-    "note": null
+    "available": true,
+    "roles": [
+      {
+        "role": "Global Administrator",
+        "eligible": "3",
+        "active": "1",
+        "caCoverage": "MFA - Privileged roles",
+        "direct": "Yes"
+      },
+      {
+        "role": "Privileged Role Administrator",
+        "eligible": "2",
+        "active": "0",
+        "caCoverage": "PIM auth context only",
+        "direct": "Partial"
+      },
+      {
+        "role": "Security Administrator",
+        "eligible": "4",
+        "active": "1",
+        "caCoverage": "No direct role-targeted policy",
+        "direct": "No"
+      }
+    ],
+    "note": "Partial means role coverage is indirect through shared controls."
   },
   "reportOnlyPipeline": {
     "policies": [
       {
-        "name": "Token Protection Policy",
+        "name": "Token protection rollout",
         "grantControl": "Token protection",
         "targetApps": "Exchange + SharePoint",
         "modified": "2025-08-05",
         "priority": "High"
       },
       {
-        "name": "Block Admin Portal Access",
+        "name": "Admin portal geo constraint",
         "grantControl": "Block access",
-        "targetApps": "Admin Portals",
-        "modified": "2025-08-07",
+        "targetApps": "Microsoft Admin Portals",
+        "modified": "2025-09-02",
         "priority": "Medium"
       },
       {
-        "name": "BYOD Pilot",
-        "grantControl": "MFA + Compliant",
+        "name": "BYOD pilot",
+        "grantControl": "MFA + Compliant device",
         "targetApps": "Office 365",
-        "modified": null,
+        "modified": "2026-01-16",
         "priority": "Low"
       }
     ],
     "callout": {
-      "title": "Action Required",
-      "text": "Token protection policy has been in report-only since August 2025 (8+ months). Recommend enforcement after log review."
+      "title": "Execution focus",
+      "text": "High-priority report-only items should move into staged enforcement this quarter."
     }
   },
   "msManagedOverlap": {
     "policies": [
       {
-        "name": "MFA for admins at Admin Portals",
-        "description": "MFA for admin roles at Admin Portals",
-        "customEquivalent": "MFA - All Administrators",
-        "overlap": "Full"
-      },
-      {
-        "name": "Block legacy authentication",
-        "description": "Block Exchange ActiveSync + Other",
-        "customEquivalent": "Block Legacy Authentication",
+        "name": "MFA for admins at admin portals",
+        "description": "Requires MFA for core admin roles in admin portals",
+        "customEquivalent": "MFA - Privileged roles",
         "overlap": "Full"
       },
       {
         "name": "Phishing-resistant MFA for admins",
-        "description": "WHfB, FIDO2, x509 for admin roles",
+        "description": "Requires phishing-resistant methods for admin roles",
         "customEquivalent": "No custom equivalent",
         "overlap": "Gap"
+      },
+      {
+        "name": "Block legacy authentication",
+        "description": "Blocks legacy protocols for all users",
+        "customEquivalent": "Legacy authentication block",
+        "overlap": "Full"
       }
     ],
     "callout": {
-      "title": "Critical Gap",
-      "text": "No custom policy enforces phishing-resistant MFA (WHfB/FIDO2/x509) for admin roles."
+      "title": "Critical gap",
+      "text": "No fully equivalent custom policy enforces phishing-resistant admin MFA."
     }
   },
   "recommendations": {
     "high": [
-      "Enforce phishing-resistant MFA for admin roles",
-      "Remove SMS from authentication strength policies",
-      "Enforce token protection for Exchange and SharePoint"
+      "Enforce phishing-resistant MFA for privileged roles",
+      "Enable token protection controls for core workloads"
     ],
     "medium": [
-      "Review and enforce stale report-only policies",
-      "Add CA policy coverage for all privileged roles"
+      "Convert stale report-only controls with staged rollout windows",
+      "Add direct CA targeting for uncovered privileged roles"
     ],
     "low": [
-      "Narrow device code flow block scope"
+      "Retire low-value legacy exceptions"
+    ]
+  },
+  "roadmap": {
+    "nearTerm": [
+      {
+        "title": "Enable token protection for Exchange and SharePoint",
+        "priority": "Near-term",
+        "evidence": "High-priority report-only item"
+      },
+      "Move privileged role MFA to phishing-resistant strength"
+    ],
+    "midTerm": [
+      "Close remaining Microsoft-managed overlap gaps",
+      "Reduce standing active assignments in privileged roles"
     ]
   },
   "assessment": {
-    "verdict": "GOOD - with critical improvements needed",
+    "score": 72,
+    "level": "Stable",
+    "verdict": "GOOD - improvement actions required",
     "verdictColor": "amber",
-    "prioritySummary": "3 high-priority items  •  2 medium-priority items  •  1 low-priority item",
-    "criticalGap": "No phishing-resistant MFA enforced for privileged roles",
-    "dataSources": "CA Policies"
+    "prioritySummary": "2 high | 2 medium | 1 low",
+    "criticalGap": "Phishing-resistant MFA is not consistently enforced for privileged roles",
+    "dataSources": "CA Policies, Named Locations, PIM, Auth Strengths"
   }
 }

@@ -1,48 +1,32 @@
-const pptxgen = require("pptxgenjs");
+"use strict";
+
 const fs = require("fs");
 const path = require("path");
+const pptxgen = require("pptxgenjs");
+const defaultTheme = require("./theme.default");
 
-// ─── DESIGN TOKENS (dark theme) ────────────────────────────────
-const C = {
-  bg:         "0F172A",
-  bgCard:     "1E293B",
-  bgCardDim:  "162032",
-  border:     "334155",
-  borderTeal: "0E7490",
-  teal:       "06B6D4",
-  tealDark:   "0891B2",
-  white:      "F1F5F9",
-  muted:      "94A3B8",
-  mutedDark:  "64748B",
-  green:      "10B981",
-  greenDim:   "064E3B",
-  amber:      "F59E0B",
-  amberDim:   "78350F",
-  red:        "EF4444",
-  redDim:     "7F1D1D",
-  grantGreen: "10B981",
-  blockRed:   "EF4444",
-  circle:     "1E3A5F",
+const SLIDE = {
+  W: 10,
+  H: 5.625,
+  M: 0.42,
 };
 
-const FONT = "Calibri";
-const FONT_LIGHT = "Calibri Light";
-const W = 10;
-const H = 5.625;
-const M = 0.4;
+const CONTENT_LIMITS = {
+  executiveCardsPerSlide: 4,
+  roadmapItemsPerColumn: 5,
+  categoryCardsPerSlide: 6,
+  layerCardsPerSlide: 3,
+  riskCardsPerSlide: 3,
+  authCardsPerSlide: 4,
+  tableRows: {
+    mfa: 7,
+    pim: 10,
+    reportOnly: 9,
+    msManaged: 8,
+    matrix: 14,
+  },
+};
 
-// ─── COLOR KEY RESOLVER ────────────────────────────────────────
-function resolveColor(colorKey) {
-  return C[colorKey] || C.muted;
-}
-
-function resolveRatingDim(ratingColor) {
-  if (ratingColor === "red") return C.redDim;
-  if (ratingColor === "teal") return "0E3B4E";
-  return C.greenDim;
-}
-
-// ─── ALL POSSIBLE CONTROLS ────────────────────────────────────
 const ALL_GRANT_CONTROLS = [
   "Multifactor authentication",
   "Authentication strength",
@@ -52,6 +36,7 @@ const ALL_GRANT_CONTROLS = [
   "App protection policy",
   "Change password",
   "Terms of use",
+  "Block access",
 ];
 
 const ALL_SESSION_CONTROLS = [
@@ -64,1413 +49,2309 @@ const ALL_SESSION_CONTROLS = [
   "Token protection",
 ];
 
-// ─── HELPERS ───────────────────────────────────────────────────
-function stateColor(state) {
-  if (state === "enabled") return { accent: C.green, dim: C.greenDim, label: "ENABLED" };
-  if (state === "report_only") return { accent: C.amber, dim: C.amberDim, label: "REPORT-ONLY" };
-  return { accent: C.red, dim: C.redDim, label: "DISABLED" };
+const KNOWN_LABELS = {
+  all: "All",
+  none: "None",
+  "00000003-0000-0000-c000-000000000000": "Microsoft Graph",
+  "00000002-0000-0ff1-ce00-000000000000": "Office 365 Exchange Online",
+  "00000003-0000-0ff1-ce00-000000000000": "Microsoft SharePoint Online",
+  "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe": "Microsoft Teams Services",
+  Office365: "Office 365",
+  MicrosoftAdminPortals: "Microsoft Admin Portals",
+};
+
+function parseArgs(argv) {
+  const options = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--analysis") options.analysis = argv[i + 1];
+    if (arg === "--policies") options.policies = argv[i + 1];
+    if (arg === "--output") options.output = argv[i + 1];
+    if (arg === "--theme") options.theme = argv[i + 1];
+    if (arg === "--help" || arg === "-h") options.help = true;
+  }
+  return options;
 }
 
-function getAction(p) {
-  const g = p.grantControls || {};
-  if (g.controls && g.controls.some(c => c.toLowerCase().includes("block"))) return "Block";
-  if (g.operator === "Not configured") return "\u2014";
-  return "Grant";
+function printHelp() {
+  console.log("Usage: node skill/generate_report.js [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  --analysis <path>   Path to analysis JSON (default: analysis.json)");
+  console.log("  --policies <path>   Path to policies JSON (default: policies.json)");
+  console.log("  --output <path>     Output PPTX path (default: CA_Security_Posture_Report.pptx)");
+  console.log("  --theme <path>      Optional theme JS/JSON file");
+  console.log("  --help              Show this help");
 }
 
-function getActiveGrantControls(policy) {
-  const g = policy.grantControls || {};
-  const active = new Set();
-  (g.controls || []).forEach(c => {
-    const cl = c.toLowerCase();
-    if (cl.includes("multifactor")) active.add("Multifactor authentication");
-    if (cl.includes("compliant")) active.add("Compliant device");
-    if (cl.includes("hybrid") || cl.includes("azure ad joined")) active.add("Hybrid Azure AD joined");
-    if (cl.includes("approved client")) active.add("Approved client app");
-    if (cl.includes("app protection")) active.add("App protection policy");
-    if (cl.includes("password change") || cl.includes("change password") || (cl.includes("password") && cl.includes("require"))) active.add("Change password");
-    if (cl.includes("terms")) active.add("Terms of use");
-  });
-  if (g.authStrength) active.add("Authentication strength");
-  return active;
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
-function isBlockAccess(policy) {
-  const g = policy.grantControls || {};
-  return (g.controls || []).some(c => c.toLowerCase().includes("block"));
+function isObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
 }
 
-// ─── DECORATIVE BACKGROUND CIRCLES ─────────────────────────────
-function addBgCircles(slide, pres) {
-  slide.addShape(pres.shapes.OVAL, {
-    x: 6.5, y: -1.5, w: 5, h: 5,
-    fill: { color: C.circle, transparency: 70 }
+function deepMerge(base, override) {
+  if (!isObject(base) || !isObject(override)) return override;
+  const merged = { ...base };
+  Object.keys(override).forEach((key) => {
+    const next = override[key];
+    if (isObject(next) && isObject(base[key])) {
+      merged[key] = deepMerge(base[key], next);
+      return;
+    }
+    merged[key] = next;
   });
-  slide.addShape(pres.shapes.OVAL, {
-    x: 7.5, y: 2.0, w: 4, h: 4,
-    fill: { color: C.circle, transparency: 80 }
+  return merged;
+}
+
+function loadTheme(themePath, projectDir) {
+  if (!themePath) return deepClone(defaultTheme);
+  const resolved = path.isAbsolute(themePath) ? themePath : path.resolve(projectDir, themePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Theme file not found: ${resolved}`);
+  }
+  let customTheme;
+  if (resolved.endsWith(".json")) {
+    customTheme = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  } else {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    customTheme = require(resolved);
+  }
+  return deepMerge(deepClone(defaultTheme), customTheme.default || customTheme);
+}
+
+function ensureFileExists(filePath, friendlyName) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`${friendlyName} not found at ${filePath}`);
+  }
+}
+
+function readJson(filePath, friendlyName) {
+  ensureFileExists(filePath, friendlyName);
+  const raw = fs.readFileSync(filePath, "utf8");
+  return JSON.parse(raw);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function hasValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value === null || value === undefined) return false;
+  return String(value).trim() !== "";
+}
+
+function pickFirst(...values) {
+  for (let i = 0; i < values.length; i += 1) {
+    if (hasValue(values[i])) return values[i];
+  }
+  return null;
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value.filter((item) => hasValue(item));
+  if (!hasValue(value)) return [];
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item);
+  }
+  return [value];
+}
+
+function cleanWhitespace(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function humanizeIdentifier(value) {
+  return cleanWhitespace(
+    String(value || "")
+      .replace(/[_/]+/g, " ")
+      .replace(/\b[a-f0-9]{8}-[a-f0-9-]{27}\b/gi, "Directory object")
+  );
+}
+
+function mapKnownLabel(value) {
+  const direct = KNOWN_LABELS[value];
+  if (direct) return direct;
+  const lowered = String(value || "").toLowerCase();
+  if (KNOWN_LABELS[lowered]) return KNOWN_LABELS[lowered];
+  return value;
+}
+
+function sanitizeText(value, maxLen = 100) {
+  if (!hasValue(value)) return "Not configured";
+  const text = cleanWhitespace(humanizeIdentifier(mapKnownLabel(value)));
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+}
+
+function summarizeList(value, options = {}) {
+  const maxItems = options.maxItems || 3;
+  const maxLen = options.maxLen || 92;
+  const items = toArray(value).map((item) => sanitizeText(item, 42));
+  if (!items.length) return "Not configured";
+  if (items.length === 1) return sanitizeText(items[0], maxLen);
+  if (items.length <= maxItems) return sanitizeText(items.join(", "), maxLen);
+  const visible = items.slice(0, maxItems).join(", ");
+  return sanitizeText(`${visible}, +${items.length - maxItems} more`, maxLen);
+}
+
+function normalizeDate(value) {
+  if (!hasValue(value)) return "Not provided";
+  const asDate = new Date(value);
+  if (Number.isNaN(asDate.valueOf())) return sanitizeText(value, 24);
+  return asDate.toISOString().slice(0, 10);
+}
+
+function normalizeState(state) {
+  if (!hasValue(state)) return "disabled";
+  const raw = String(state).toLowerCase();
+  if (raw.includes("report") || raw.includes("enabledforreporting")) return "report_only";
+  if (raw === "enabled") return "enabled";
+  return "disabled";
+}
+
+function mapStateLabel(state) {
+  if (state === "enabled") return "Enabled";
+  if (state === "report_only") return "Report-only";
+  return "Disabled";
+}
+
+function mapStateTone(state) {
+  if (state === "enabled") return "positive";
+  if (state === "report_only") return "caution";
+  return "critical";
+}
+
+function isConfiguredValue(value) {
+  return hasValue(value) && String(value).toLowerCase() !== "not configured";
+}
+
+function getToneColors(theme, tone) {
+  if (tone === "positive") return { strong: theme.palette.positive, soft: theme.palette.positiveSoft };
+  if (tone === "caution") return { strong: theme.palette.caution, soft: theme.palette.cautionSoft };
+  if (tone === "critical") return { strong: theme.palette.critical, soft: theme.palette.criticalSoft };
+  return { strong: theme.palette.neutral, soft: theme.palette.neutralSoft };
+}
+
+function getSeverityTone(priority) {
+  const raw = String(priority || "").toLowerCase();
+  if (raw.includes("high")) return "critical";
+  if (raw.includes("medium")) return "caution";
+  return "neutral";
+}
+
+function formatSignInFrequency(value) {
+  if (!hasValue(value)) return null;
+  if (typeof value === "string") return sanitizeText(value, 32);
+  if (typeof value === "number") return `${value} hours`;
+  if (isObject(value) && hasValue(value.value)) {
+    const unit = hasValue(value.type) ? String(value.type) : "days";
+    return `${value.value} ${unit}`;
+  }
+  return sanitizeText(JSON.stringify(value), 32);
+}
+
+function normalizeGrantControls(policy) {
+  const raw = pickFirst(policy.grantControls, policy.conditions && policy.conditions.grantControls, {});
+  const controls = toArray(pickFirst(raw.controls, raw.builtInControls)).map((value) => sanitizeText(value, 40));
+  const authStrength = sanitizeText(
+    pickFirst(raw.authStrength, raw.authenticationStrength && raw.authenticationStrength.displayName, raw.authenticationStrength),
+    48
+  );
+  return {
+    operator: sanitizeText(pickFirst(raw.operator, "Not configured"), 20),
+    controls,
+    authStrength: authStrength === "Not configured" ? null : authStrength,
+  };
+}
+
+function normalizeSessionControls(policy) {
+  const raw = pickFirst(policy.sessionControls, policy.conditions && policy.conditions.sessionControls, {});
+  const active = [];
+  const signInFrequency = formatSignInFrequency(raw.signInFrequency);
+  if (signInFrequency) active.push(`Sign-in frequency (${signInFrequency})`);
+  if (hasValue(raw.appEnforcedRestrictions) || hasValue(raw.applicationEnforcedRestrictions)) {
+    active.push("App enforced restrictions");
+  }
+  if (hasValue(raw.cloudAppSecurity)) active.push("Conditional Access App Control");
+  if (hasValue(raw.persistentBrowser)) active.push(`Persistent browser (${sanitizeText(raw.persistentBrowser, 20)})`);
+  if (hasValue(raw.continuousAccessEvaluation)) active.push("Continuous access evaluation");
+  if (hasValue(raw.disableResilienceDefaults)) active.push("Disable resilience defaults");
+  if (hasValue(raw.tokenProtection)) active.push("Token protection");
+  return {
+    signInFrequency,
+    active,
+  };
+}
+
+function normalizeUsers(policy) {
+  const source = pickFirst(policy.users, policy.conditions && policy.conditions.users, {});
+  const includeUsers = summarizeList(pickFirst(source.includeUsers, source.include, source.users), { maxItems: 2 });
+  const excludeUsers = summarizeList(pickFirst(source.excludeUsers, source.exclude), { maxItems: 2, maxLen: 80 });
+  const includeGroups = summarizeList(source.includeGroups, { maxItems: 2, maxLen: 80 });
+  const excludeGroups = summarizeList(source.excludeGroups, { maxItems: 2, maxLen: 80 });
+  const includeRoles = summarizeList(source.includeRoles, { maxItems: 2, maxLen: 80 });
+  const excludeRoles = summarizeList(source.excludeRoles, { maxItems: 2, maxLen: 80 });
+  return {
+    includeUsers,
+    excludeUsers,
+    includeGroups,
+    excludeGroups,
+    includeRoles,
+    excludeRoles,
+  };
+}
+
+function normalizeApplications(policy) {
+  const source = pickFirst(policy.applications, policy.conditions && policy.conditions.applications, {});
+  return {
+    include: summarizeList(pickFirst(source.include, source.includeApplications), { maxItems: 2 }),
+    exclude: summarizeList(pickFirst(source.exclude, source.excludeApplications), { maxItems: 2 }),
+    userActions: summarizeList(source.userActions, { maxItems: 2 }),
+    authContext: summarizeList(source.authContext, { maxItems: 2 }),
+  };
+}
+
+function normalizeConditions(policy) {
+  const source = pickFirst(policy.conditions, {});
+  const platformsSource = pickFirst(
+    source.platformsInclude,
+    source.platforms && source.platforms.includePlatforms,
+    Array.isArray(source.platforms) || typeof source.platforms === "string" ? source.platforms : null
+  );
+  const locationsIncludeSource = pickFirst(
+    source.locationsInclude,
+    source.locations && source.locations.includeLocations,
+    Array.isArray(source.locations) || typeof source.locations === "string" ? source.locations : null
+  );
+  const locationsExcludeSource = pickFirst(
+    source.locationsExclude,
+    source.locations && source.locations.excludeLocations,
+    source.excludeLocations
+  );
+  const clientAppsSource = pickFirst(
+    source.clientApps,
+    source.clientAppTypes,
+    source.clientApplications
+  );
+  const riskSource = pickFirst(
+    source.signInRisk,
+    source.userRisk,
+    source.signInRiskLevels,
+    source.userRiskLevels
+  );
+  const devicesSource = pickFirst(
+    source.deviceFilter,
+    source.authFlow,
+    source.authenticationFlows,
+    source.devices && source.devices.deviceFilter
+  );
+  const platforms = summarizeList(
+    platformsSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  const locationsInclude = summarizeList(
+    locationsIncludeSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  const locationsExclude = summarizeList(
+    locationsExcludeSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  const clientApps = summarizeList(
+    clientAppsSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  const risk = summarizeList(
+    riskSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  const devices = summarizeList(
+    devicesSource,
+    { maxItems: 2, maxLen: 70 }
+  );
+  return {
+    platforms,
+    locationsInclude,
+    locationsExclude,
+    clientApps,
+    risk,
+    devices,
+  };
+}
+
+function normalizePolicies(rawPolicies) {
+  const list = Array.isArray(rawPolicies)
+    ? rawPolicies
+    : Array.isArray(rawPolicies && rawPolicies.value)
+      ? rawPolicies.value
+      : [];
+
+  return list.map((policy, index) => {
+    const grantControls = normalizeGrantControls(policy);
+    return {
+      id: sanitizeText(pickFirst(policy.id, `policy-${index + 1}`), 40),
+      name: sanitizeText(pickFirst(policy.name, policy.displayName, `Policy ${index + 1}`), 86),
+      state: normalizeState(policy.state),
+      lastModified: normalizeDate(pickFirst(policy.lastModified, policy.modifiedDateTime)),
+      users: normalizeUsers(policy),
+      applications: normalizeApplications(policy),
+      conditions: normalizeConditions(policy),
+      grantControls,
+      sessionControls: normalizeSessionControls(policy),
+      action: grantControls.controls.some((item) => item.toLowerCase().includes("block")) ? "Block" : "Grant",
+    };
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SECTION A: EXECUTIVE OVERVIEW
-// ═══════════════════════════════════════════════════════════════
+function chunk(list, size) {
+  if (size <= 0) return [list];
+  const pages = [];
+  for (let i = 0; i < list.length; i += size) {
+    pages.push(list.slice(i, i + size));
+  }
+  return pages.length ? pages : [[]];
+}
 
-function addTitleSlide(pres, analysis) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-  const meta = analysis.meta;
+function inferAssessment(analysis, policies) {
+  const assessment = analysis.assessment || {};
+  const enabled = policies.filter((policy) => policy.state === "enabled").length;
+  const reportOnly = policies.filter((policy) => policy.state === "report_only").length;
+  const scoreDerived = clamp(Math.round((((enabled * 1) + (reportOnly * 0.5)) / Math.max(1, policies.length)) * 100), 0, 100);
+  const score = Number.isFinite(assessment.score) ? clamp(Math.round(assessment.score), 0, 100) : scoreDerived;
+  const level = hasValue(assessment.level)
+    ? sanitizeText(assessment.level, 32)
+    : score >= 85
+      ? "Strong"
+      : score >= 70
+        ? "Stable"
+        : score >= 55
+          ? "Needs Improvement"
+          : "At Risk";
+  return {
+    score,
+    level,
+    verdict: sanitizeText(pickFirst(assessment.verdict, "Posture review complete"), 72),
+    prioritySummary: sanitizeText(
+      pickFirst(assessment.prioritySummary, "Priorities are grouped in the next section."),
+      110
+    ),
+    criticalGap: hasValue(assessment.criticalGap) ? sanitizeText(assessment.criticalGap, 100) : null,
+  };
+}
 
-  slide.addText("\u{1F6E1}", {
-    x: M, y: 0.5, w: 1.2, h: 1.2,
-    fontSize: 48, align: "center", valign: "middle", margin: 0
+function normalizePriorityItem(item, fallbackPriority) {
+  if (typeof item === "string") {
+    return {
+      title: sanitizeText(item, 94),
+      priority: fallbackPriority,
+      evidence: null,
+    };
+  }
+  return {
+    title: sanitizeText(pickFirst(item.title, item.action, item.text), 94),
+    priority: sanitizeText(pickFirst(item.priority, fallbackPriority), 16),
+    evidence: hasValue(item.evidence) ? sanitizeText(item.evidence, 94) : null,
+  };
+}
+
+function collectTopPriorities(analysis) {
+  const fromExecutive = toArray(analysis.executiveSummary && analysis.executiveSummary.topPriorities).map((item) =>
+    normalizePriorityItem(item, "High")
+  );
+  if (fromExecutive.length) return fromExecutive;
+
+  const recommendations = analysis.recommendations || {};
+  const derived = [];
+  toArray(recommendations.high).forEach((item) => derived.push(normalizePriorityItem(item, "High")));
+  toArray(recommendations.medium).forEach((item) => derived.push(normalizePriorityItem(item, "Medium")));
+  toArray(recommendations.low).forEach((item) => derived.push(normalizePriorityItem(item, "Low")));
+  return derived.slice(0, 8);
+}
+
+function normalizeRoadmap(analysis) {
+  const roadmap = analysis.roadmap || {};
+  const nearTerm = toArray(pickFirst(roadmap.nearTerm, roadmap.near_term)).map((item) =>
+    normalizePriorityItem(item, "Near-term")
+  );
+  const midTerm = toArray(pickFirst(roadmap.midTerm, roadmap.mid_term)).map((item) =>
+    normalizePriorityItem(item, "Mid-term")
+  );
+  return { nearTerm, midTerm };
+}
+
+function deriveRoadmapFromRecommendations(analysis) {
+  const recommendations = analysis.recommendations || {};
+  const nearTerm = toArray(recommendations.high).slice(0, 6).map((item) => normalizePriorityItem(item, "Near-term"));
+  const midTerm = toArray(recommendations.medium).slice(0, 6).map((item) => normalizePriorityItem(item, "Mid-term"));
+  return { nearTerm, midTerm };
+}
+
+function buildRoadmap(analysis) {
+  const normalized = normalizeRoadmap(analysis);
+  if (normalized.nearTerm.length || normalized.midTerm.length) return normalized;
+  return deriveRoadmapFromRecommendations(analysis);
+}
+
+function resolveLogoPath(logoPath, themeLogoPath, projectDir) {
+  const candidate = pickFirst(logoPath, themeLogoPath);
+  if (!candidate) return null;
+  const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(projectDir, candidate);
+  return fs.existsSync(resolved) ? resolved : null;
+}
+
+function addDeckBackground(slide, ctx) {
+  slide.addShape(ctx.pres.shapes.OVAL, {
+    x: 6.35,
+    y: -1.2,
+    w: 4.9,
+    h: 4.9,
+    fill: { color: ctx.theme.palette.brandSoft, transparency: 92 },
+    line: { color: ctx.theme.palette.brandSoft, width: 0 },
+  });
+  slide.addShape(ctx.pres.shapes.OVAL, {
+    x: 7.45,
+    y: 2.2,
+    w: 3.9,
+    h: 3.9,
+    fill: { color: ctx.theme.palette.brandSoft, transparency: 95 },
+    line: { color: ctx.theme.palette.brandSoft, width: 0 },
+  });
+}
+
+function createSlide(ctx, options = {}) {
+  const slide = ctx.pres.addSlide();
+  ctx.slideNumber += 1;
+  slide.background = { color: ctx.theme.palette.canvas };
+
+  if (!options.cover) {
+    addDeckBackground(slide, ctx);
+    const sectionLabel = options.section || "Report";
+    addSlideFrame(slide, ctx, sectionLabel);
+  }
+
+  return slide;
+}
+
+function addSlideFrame(slide, ctx, sectionLabel) {
+  const t = ctx.theme;
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: 0,
+    y: 0,
+    w: SLIDE.W,
+    h: 0.06,
+    fill: { color: t.palette.brandSoft },
+    line: { color: t.palette.brandSoft, width: 0 },
   });
 
-  slide.addText("CONDITIONAL ACCESS", {
-    x: M, y: 1.9, w: 6, h: 0.35,
-    fontSize: 13, fontFace: FONT, bold: true, color: C.teal,
-    charSpacing: 4, margin: 0
+  slide.addText(sanitizeText(sectionLabel, 28).toUpperCase(), {
+    x: SLIDE.M,
+    y: 0.1,
+    w: 2.8,
+    h: 0.18,
+    fontFace: t.typography.body,
+    fontSize: 8,
+    bold: true,
+    color: t.palette.brandSoft,
+    charSpacing: 1.2,
+    margin: 0,
   });
 
-  slide.addText("Security Posture\nReport", {
-    x: M, y: 2.25, w: 6, h: 1.5,
-    fontSize: 40, fontFace: FONT, bold: true, color: C.white,
-    margin: 0, lineSpacingMultiple: 1.0
+  slide.addText(`${ctx.tenantName} | ${ctx.reportDate}`, {
+    x: SLIDE.W - SLIDE.M - 4.5,
+    y: 0.1,
+    w: 4.5,
+    h: 0.18,
+    fontFace: t.typography.body,
+    fontSize: 8,
+    color: t.palette.textSubtle,
+    align: "right",
+    margin: 0,
   });
 
-  slide.addText(meta.date, {
-    x: M, y: 3.55, w: 4, h: 0.3,
-    fontSize: 13, fontFace: FONT_LIGHT, color: C.muted, margin: 0
+  slide.addShape(ctx.pres.shapes.LINE, {
+    x: SLIDE.M,
+    y: SLIDE.H - 0.28,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0,
+    line: { color: t.palette.border, width: 0.5 },
   });
 
-  slide.addShape(pres.shapes.LINE, {
-    x: M, y: 3.95, w: 5.5, h: 0,
-    line: { color: C.teal, width: 1.5 }
+  slide.addText(`Slide ${ctx.slideNumber}`, {
+    x: SLIDE.W - SLIDE.M - 1.5,
+    y: SLIDE.H - 0.24,
+    w: 1.5,
+    h: 0.14,
+    fontFace: t.typography.body,
+    fontSize: 7,
+    color: t.palette.textSubtle,
+    align: "right",
+    margin: 0,
   });
+}
 
-  const statsY = 4.1;
-  const stats = [
-    { n: meta.policyCount, label: "Policies", color: C.teal },
-    { n: meta.enabledCount, label: "Enabled", color: C.green },
-    { n: meta.reportOnlyCount, label: "Report-Only", color: C.amber },
-    { n: meta.disabledCount, label: "Disabled", color: C.red },
-  ];
+function addSlideTitle(slide, ctx, text, y = 0.34) {
+  slide.addText(sanitizeText(text, 98), {
+    x: SLIDE.M,
+    y,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.35,
+    fontFace: ctx.theme.typography.title,
+    fontSize: 24,
+    bold: true,
+    color: ctx.theme.palette.textStrong,
+    margin: 0,
+  });
+}
 
-  stats.forEach((s, i) => {
-    const x = M + i * 1.7;
-    slide.addText(String(s.n), {
-      x, y: statsY, w: 1.2, h: 0.5,
-      fontSize: 28, fontFace: FONT, bold: true, color: s.color, margin: 0
+function addSectionSubtitle(slide, ctx, text, y = 0.73) {
+  slide.addText(sanitizeText(text, 128), {
+    x: SLIDE.M,
+    y,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.24,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 11,
+    color: ctx.theme.palette.textMuted,
+    margin: 0,
+  });
+}
+
+function addStatBadge(slide, ctx, options) {
+  const tone = options.tone || "neutral";
+  const colors = getToneColors(ctx.theme, tone);
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: options.h,
+    fill: { color: colors.soft },
+    line: { color: colors.soft, width: 0.5 },
+    rectRadius: ctx.theme.radii.md,
+  });
+  slide.addText(String(options.value), {
+    x: options.x + 0.1,
+    y: options.y + 0.06,
+    w: options.w - 0.2,
+    h: options.h * 0.55,
+    fontFace: ctx.theme.typography.heading,
+    fontSize: options.valueSize || 20,
+    bold: true,
+    color: colors.strong,
+    align: "center",
+    margin: 0,
+  });
+  slide.addText(sanitizeText(options.label, 32), {
+    x: options.x + 0.1,
+    y: options.y + (options.h * 0.58),
+    w: options.w - 0.2,
+    h: options.h * 0.32,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 9,
+    color: ctx.theme.palette.textMuted,
+    align: "center",
+    margin: 0,
+  });
+}
+
+function addCalloutBox(slide, ctx, options) {
+  const tone = options.tone || "neutral";
+  const colors = getToneColors(ctx.theme, tone);
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: options.h,
+    fill: { color: colors.soft },
+    line: { color: colors.strong, width: 0.8 },
+    rectRadius: ctx.theme.radii.md,
+  });
+  if (hasValue(options.title)) {
+    slide.addText(sanitizeText(options.title, 72), {
+      x: options.x + 0.12,
+      y: options.y + 0.07,
+      w: options.w - 0.24,
+      h: 0.18,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      bold: true,
+      color: colors.strong,
+      margin: 0,
     });
-    slide.addText(s.label, {
-      x, y: statsY + 0.45, w: 1.5, h: 0.25,
-      fontSize: 10, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
+  }
+  slide.addText(sanitizeText(options.text, 190), {
+    x: options.x + 0.12,
+    y: options.y + (hasValue(options.title) ? 0.26 : 0.1),
+    w: options.w - 0.24,
+    h: options.h - (hasValue(options.title) ? 0.32 : 0.18),
+    fontFace: ctx.theme.typography.body,
+    fontSize: 10,
+    color: ctx.theme.palette.textBody,
+    margin: 0,
+    valign: "top",
+    shrinkText: true,
+  });
+}
+
+function addInsightCard(slide, ctx, options) {
+  const tone = options.tone || "neutral";
+  const colors = getToneColors(ctx.theme, tone);
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: options.h,
+    fill: { color: ctx.theme.palette.surface },
+    line: { color: ctx.theme.palette.border, width: 0.75 },
+    rectRadius: ctx.theme.radii.md,
+  });
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: 0.04,
+    h: options.h,
+    fill: { color: colors.strong },
+    line: { color: colors.strong, width: 0 },
   });
 
-  if (meta.statsFooter) {
-    slide.addText(meta.statsFooter, {
-      x: M, y: 5.15, w: 6, h: 0.25,
-      fontSize: 9, fontFace: FONT_LIGHT, color: C.mutedDark, margin: 0
+  slide.addText(sanitizeText(options.title, 72), {
+    x: options.x + 0.12,
+    y: options.y + 0.07,
+    w: options.w - 0.24,
+    h: 0.22,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 10,
+    bold: true,
+    color: colors.strong,
+    margin: 0,
+  });
+
+  if (hasValue(options.takeaway)) {
+    slide.addText(sanitizeText(options.takeaway, 120), {
+      x: options.x + 0.12,
+      y: options.y + 0.31,
+      w: options.w - 0.24,
+      h: 0.24,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      color: ctx.theme.palette.textBody,
+      margin: 0,
+      shrinkText: true,
+    });
+  }
+
+  if (toArray(options.evidence).length) {
+    const lines = toArray(options.evidence).slice(0, 5).map((line) => sanitizeText(line, 82));
+    slide.addText(lines.map((line) => ({ text: `- ${line}`, options: { breakLine: true } })), {
+      x: options.x + 0.12,
+      y: options.y + (hasValue(options.takeaway) ? 0.57 : 0.33),
+      w: options.w - 0.24,
+      h: options.h - (hasValue(options.takeaway) ? 0.65 : 0.41),
+      fontFace: ctx.theme.typography.body,
+      fontSize: 8,
+      color: ctx.theme.palette.textMuted,
+      margin: 0,
+      shrinkText: true,
     });
   }
 }
 
-function addExecutiveSummary(pres, analysis) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-  const meta = analysis.meta;
-  const es = analysis.executiveSummary;
+function addAppendixDivider(slide, ctx, title, subtitle) {
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: 0,
+    y: 0,
+    w: SLIDE.W,
+    h: SLIDE.H,
+    fill: { color: ctx.theme.palette.surfaceAlt },
+    line: { color: ctx.theme.palette.surfaceAlt, width: 0 },
+  });
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: 0,
+    y: 0,
+    w: SLIDE.W,
+    h: 0.08,
+    fill: { color: ctx.theme.palette.brand },
+    line: { color: ctx.theme.palette.brand, width: 0 },
+  });
+  slide.addText(sanitizeText(title, 48), {
+    x: SLIDE.M,
+    y: 2.2,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.5,
+    fontFace: ctx.theme.typography.title,
+    fontSize: 36,
+    bold: true,
+    color: ctx.theme.palette.textStrong,
+    align: "center",
+    margin: 0,
+  });
+  slide.addText(sanitizeText(subtitle, 110), {
+    x: SLIDE.M,
+    y: 2.78,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.3,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 12,
+    color: ctx.theme.palette.textMuted,
+    align: "center",
+    margin: 0,
+  });
+}
 
-  slide.addText("Executive Summary", {
-    x: M, y: 0.25, w: W - 2 * M, h: 0.5,
-    fontSize: 24, fontFace: FONT, bold: true, color: C.white, margin: 0
+function estimateTableHeight(rowCount, rowHeight, minHeight, maxHeight) {
+  const computed = ((rowCount + 1) * rowHeight) + 0.14;
+  return clamp(computed, minHeight, maxHeight);
+}
+
+function addTableWrapper(slide, ctx, options) {
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: options.h,
+    fill: { color: ctx.theme.palette.surface },
+    line: { color: ctx.theme.palette.border, width: 0.75 },
+    rectRadius: ctx.theme.radii.sm,
   });
 
-  const badgeY = 0.85;
+  slide.addTable(options.rows, {
+    x: options.x + 0.04,
+    y: options.y + 0.04,
+    w: options.w - 0.08,
+    h: options.h - 0.08,
+    colW: options.colW,
+    rowH: options.rowH || 0.27,
+    border: { pt: 0.3, color: ctx.theme.palette.border },
+    autoPage: false,
+    valign: "middle",
+  });
+}
+
+function buildTableRows(ctx, headers, rows) {
+  const headerRow = headers.map((header) => ({
+    text: sanitizeText(header.label, 36),
+    options: {
+      fill: { color: ctx.theme.palette.brand },
+      color: "FFFFFF",
+      bold: true,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 8,
+      align: header.align || "left",
+    },
+  }));
+
+  const bodyRows = rows.map((row, index) => {
+    const fillColor = index % 2 === 0 ? ctx.theme.palette.surface : ctx.theme.palette.surfaceAlt;
+    return row.map((cell, idx) => {
+      const align = headers[idx].align || "left";
+      return {
+        text: sanitizeText(hasValue(cell) ? cell : "Not configured", 86),
+        options: {
+          fill: { color: fillColor },
+          color: ctx.theme.palette.textBody,
+          fontFace: ctx.theme.typography.body,
+          fontSize: 7.5,
+          align,
+        },
+      };
+    });
+  });
+
+  return [headerRow, ...bodyRows];
+}
+
+function addNarrativeHeader(slide, ctx, title, headline, takeaway, sectionTop = 0.34) {
+  addSlideTitle(slide, ctx, title, sectionTop);
+  addSectionSubtitle(slide, ctx, headline, sectionTop + 0.38);
+  addCalloutBox(slide, ctx, {
+    x: SLIDE.M,
+    y: sectionTop + 0.65,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.5,
+    title: "Takeaway",
+    text: takeaway,
+    tone: "neutral",
+  });
+  return sectionTop + 1.23;
+}
+
+function addCoverSlide(ctx, analysis) {
+  const slide = createSlide(ctx, { cover: true });
+  const t = ctx.theme;
+
+  slide.background = { color: t.palette.brand };
+  slide.addShape(ctx.pres.shapes.OVAL, {
+    x: 6.4,
+    y: -1.2,
+    w: 4.8,
+    h: 4.8,
+    fill: { color: "FFFFFF", transparency: 88 },
+    line: { color: "FFFFFF", width: 0 },
+  });
+  slide.addShape(ctx.pres.shapes.OVAL, {
+    x: 7.4,
+    y: 2.2,
+    w: 3.8,
+    h: 3.8,
+    fill: { color: "FFFFFF", transparency: 92 },
+    line: { color: "FFFFFF", width: 0 },
+  });
+
+  const reportTitle = pickFirst(
+    analysis.meta && analysis.meta.reportTitle,
+    t.metadata.title,
+    "Conditional Access Security Posture Report"
+  );
+  const coverTitle = sanitizeText(reportTitle, 78);
+  const coverTitleLines = Math.min(4, Math.max(2, Math.ceil(coverTitle.length / 18)));
+  const coverTitleY = 1.02;
+  const coverTitleH = 0.32 + (coverTitleLines * 0.47);
+  const coverMetaY = coverTitleY + coverTitleH + 0.12;
+
+  slide.addText(coverTitle, {
+    x: SLIDE.M,
+    y: coverTitleY,
+    w: 6.5,
+    h: coverTitleH,
+    fontFace: t.typography.title,
+    fontSize: 34,
+    bold: true,
+    color: "FFFFFF",
+    margin: 0,
+    valign: "top",
+    shrinkText: true,
+  });
+
+  slide.addText(`${ctx.tenantName} | ${ctx.reportDate}`, {
+    x: SLIDE.M,
+    y: coverMetaY,
+    w: 6.5,
+    h: 0.3,
+    fontFace: t.typography.body,
+    fontSize: 13,
+    color: t.palette.brandSoft,
+    margin: 0,
+  });
+
+  const meta = analysis.meta || {};
   const badges = [
-    { n: meta.policyCount, label: "Total Policies", color: C.teal },
-    { n: meta.enabledCount, label: "Enabled", color: C.green },
-    { n: meta.reportOnlyCount, label: "Report-Only", color: C.amber },
-    { n: meta.disabledCount, label: "Disabled", color: C.red },
+    { label: "Policies", value: meta.policyCount || ctx.policies.length, tone: "neutral" },
+    { label: "Enabled", value: meta.enabledCount || ctx.policies.filter((item) => item.state === "enabled").length, tone: "positive" },
+    { label: "Report-only", value: meta.reportOnlyCount || ctx.policies.filter((item) => item.state === "report_only").length, tone: "caution" },
+    { label: "Disabled", value: meta.disabledCount || ctx.policies.filter((item) => item.state === "disabled").length, tone: "critical" },
   ];
-  badges.forEach((b, i) => {
-    const bx = M + i * 2.2;
-    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-      x: bx, y: badgeY, w: 2.0, h: 0.55,
-      fill: { color: C.bgCard }, rectRadius: 0.05,
-      line: { color: C.border, width: 0.5 }
+  badges.forEach((badge, index) => {
+    const colors = getToneColors(t, badge.tone);
+    const x = SLIDE.M + (index * 1.62);
+    slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+      x,
+      y: 4.35,
+      w: 1.48,
+      h: 0.9,
+      fill: { color: colors.soft, transparency: 15 },
+      line: { color: colors.soft, width: 0.25 },
+      rectRadius: t.radii.md,
     });
-    slide.addText(String(b.n), {
-      x: bx + 0.1, y: badgeY + 0.05, w: 0.6, h: 0.45,
-      fontSize: 22, fontFace: FONT, bold: true, color: b.color, margin: 0
+    slide.addText(String(badge.value), {
+      x,
+      y: 4.45,
+      w: 1.48,
+      h: 0.42,
+      fontFace: t.typography.heading,
+      fontSize: 22,
+      bold: true,
+      color: colors.strong,
+      align: "center",
+      margin: 0,
     });
-    slide.addText(b.label, {
-      x: bx + 0.7, y: badgeY + 0.1, w: 1.2, h: 0.35,
-      fontSize: 10, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
-  });
-
-  slide.addText("KEY FINDINGS", {
-    x: M, y: 1.6, w: W - 2 * M, h: 0.25,
-    fontSize: 9, fontFace: FONT, bold: true, color: C.teal, charSpacing: 2, margin: 0
-  });
-
-  const colW = (W - 2 * M - 0.4) / 2;
-  const colY = 1.95;
-  const itemH = 0.48;
-  const colH = 0.5 + Math.max(es.strengths.length, es.concerns.length) * itemH + 0.1;
-
-  // Strengths
-  const strX = M;
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: strX, y: colY, w: colW, h: colH,
-    fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: strX, y: colY, w: 0.04, h: colH,
-    fill: { color: C.green }
-  });
-  slide.addText("Strengths", {
-    x: strX + 0.15, y: colY + 0.1, w: colW - 0.3, h: 0.3,
-    fontSize: 14, fontFace: FONT, bold: true, color: C.green, margin: 0
-  });
-  es.strengths.forEach((s, i) => {
-    slide.addText("\u2713", {
-      x: strX + 0.15, y: colY + 0.5 + i * itemH, w: 0.25, h: 0.3,
-      fontSize: 12, fontFace: FONT, bold: true, color: C.green, margin: 0
-    });
-    slide.addText(s, {
-      x: strX + 0.4, y: colY + 0.5 + i * itemH, w: colW - 0.6, h: 0.4,
-      fontSize: 10, fontFace: FONT_LIGHT, color: C.white, margin: 0
+    slide.addText(badge.label, {
+      x,
+      y: 4.84,
+      w: 1.48,
+      h: 0.2,
+      fontFace: t.typography.body,
+      fontSize: 8,
+      color: "FFFFFF",
+      align: "center",
+      margin: 0,
     });
   });
 
-  // Concerns
-  const conX = strX + colW + 0.4;
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: conX, y: colY, w: colW, h: colH,
-    fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: conX, y: colY, w: 0.04, h: colH,
-    fill: { color: C.red }
-  });
-  slide.addText("Concerns", {
-    x: conX + 0.15, y: colY + 0.1, w: colW - 0.3, h: 0.3,
-    fontSize: 14, fontFace: FONT, bold: true, color: C.red, margin: 0
-  });
-  es.concerns.forEach((c, i) => {
-    slide.addText("\u2717", {
-      x: conX + 0.15, y: colY + 0.5 + i * itemH, w: 0.25, h: 0.3,
-      fontSize: 12, fontFace: FONT, bold: true, color: C.red, margin: 0
+  if (ctx.logoPath) {
+    slide.addImage({
+      path: ctx.logoPath,
+      x: SLIDE.W - 1.95,
+      y: 0.3,
+      w: 1.5,
+      h: 0.55,
+      sizing: { type: "contain", x: SLIDE.W - 1.95, y: 0.3, w: 1.5, h: 0.55 },
     });
-    slide.addText(c, {
-      x: conX + 0.4, y: colY + 0.5 + i * itemH, w: colW - 0.6, h: 0.4,
-      fontSize: 10, fontFace: FONT_LIGHT, color: C.white, margin: 0
+  }
+}
+
+function addAgendaSlide(ctx) {
+  const slide = createSlide(ctx, { section: "Executive Narrative" });
+  addSlideTitle(slide, ctx, "Agenda");
+  addSectionSubtitle(slide, ctx, "This report is structured for executive decisions first, evidence second, appendix last.");
+
+  const agendaItems = [
+    {
+      title: "1. Posture Snapshot",
+      takeaway: "Current score, trend signal, and policy status distribution.",
+      evidence: ["Scorecard", "State mix", "Assessment summary"],
+      tone: "neutral",
+    },
+    {
+      title: "2. Immediate Priorities",
+      takeaway: "Top actions that reduce risk quickly in the next quarter.",
+      evidence: ["Top priorities", "90-day roadmap"],
+      tone: "critical",
+    },
+    {
+      title: "3. Supporting Analysis",
+      takeaway: "Detailed evidence across MFA, risk, geography, and privileged access.",
+      evidence: ["Control evidence", "Policy overlap", "Recommendation detail"],
+      tone: "caution",
+    },
+    {
+      title: "4. Appendix",
+      takeaway: "Complete inventory and per-policy detail for audit and implementation.",
+      evidence: ["Policy matrix", "Policy-level breakdown"],
+      tone: "neutral",
+    },
+  ];
+
+  const cardW = (SLIDE.W - (SLIDE.M * 2) - 0.25) / 2;
+  const cardH = 1.35;
+  agendaItems.forEach((item, index) => {
+    const row = Math.floor(index / 2);
+    const col = index % 2;
+    addInsightCard(slide, ctx, {
+      x: SLIDE.M + (col * (cardW + 0.25)),
+      y: 1.3 + (row * (cardH + 0.2)),
+      w: cardW,
+      h: cardH,
+      title: item.title,
+      takeaway: item.takeaway,
+      evidence: item.evidence,
+      tone: item.tone,
     });
   });
 }
 
-function addPolicyLandscape(pres, analysis) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  const meta = analysis.meta;
-  const pl = analysis.policyLandscape;
+function addScorecardSlide(ctx, analysis) {
+  const slide = createSlide(ctx, { section: "Executive Narrative" });
+  const meta = analysis.meta || {};
+  const assessment = inferAssessment(analysis, ctx.policies);
+  addSlideTitle(slide, ctx, "Posture Scorecard");
+  addSectionSubtitle(slide, ctx, "Overall posture combines policy enforcement state and current recommendation backlog.");
 
-  slide.addText("Policy Landscape", {
-    x: M, y: 0.25, w: W - 2 * M, h: 0.5,
-    fontSize: 24, fontFace: FONT, bold: true, color: C.white, margin: 0
+  const scoreTone = assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical";
+  addStatBadge(slide, ctx, {
+    x: SLIDE.M,
+    y: 1.2,
+    w: 2.4,
+    h: 2.0,
+    label: `${assessment.level} posture`,
+    value: assessment.score,
+    valueSize: 44,
+    tone: scoreTone,
   });
 
-  slide.addText("STATE DISTRIBUTION", {
-    x: M, y: 0.85, w: 4, h: 0.25,
-    fontSize: 9, fontFace: FONT, bold: true, color: C.teal, charSpacing: 2, margin: 0
-  });
-
-  const total = meta.policyCount;
-  const barY = 1.2;
-  const maxBarW = 5.0;
-  const bars = [
-    { n: meta.enabledCount, label: "Enabled", color: C.green },
-    { n: meta.reportOnlyCount, label: "Report-Only", color: C.amber },
-    { n: meta.disabledCount, label: "Disabled", color: C.red },
+  const metrics = [
+    { label: "Total policies", value: meta.policyCount || ctx.policies.length, tone: "neutral" },
+    { label: "Enabled", value: meta.enabledCount || ctx.policies.filter((p) => p.state === "enabled").length, tone: "positive" },
+    { label: "Report-only", value: meta.reportOnlyCount || ctx.policies.filter((p) => p.state === "report_only").length, tone: "caution" },
+    { label: "Disabled", value: meta.disabledCount || ctx.policies.filter((p) => p.state === "disabled").length, tone: "critical" },
   ];
 
-  bars.forEach((b, i) => {
-    const by = barY + i * 0.7;
-    const bw = Math.max(0.3, (b.n / total) * maxBarW);
-    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-      x: M + 1.5, y: by, w: bw, h: 0.4,
-      fill: { color: b.color }, rectRadius: 0.05
-    });
-    slide.addText(b.label, {
-      x: M, y: by, w: 1.4, h: 0.4,
-      fontSize: 10, fontFace: FONT, color: C.muted, align: "right", margin: 0
-    });
-    slide.addText(String(b.n), {
-      x: M + 1.5 + bw + 0.1, y: by, w: 0.5, h: 0.4,
-      fontSize: 14, fontFace: FONT, bold: true, color: b.color, margin: 0
+  metrics.forEach((item, index) => {
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    addStatBadge(slide, ctx, {
+      x: 3.1 + (col * 3.25),
+      y: 1.2 + (row * 1.05),
+      w: 3.0,
+      h: 0.9,
+      label: item.label,
+      value: item.value,
+      valueSize: 26,
+      tone: item.tone,
     });
   });
 
-  slide.addText("CATEGORY BREAKDOWN", {
-    x: M, y: 3.35, w: 4, h: 0.25,
-    fontSize: 9, fontFace: FONT, bold: true, color: C.teal, charSpacing: 2, margin: 0
+  addCalloutBox(slide, ctx, {
+    x: SLIDE.M,
+    y: 3.45,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 1.05,
+    title: "Assessment",
+    text: `${assessment.verdict}. ${assessment.prioritySummary}${assessment.criticalGap ? ` Critical gap: ${assessment.criticalGap}.` : ""}`,
+    tone: scoreTone,
+  });
+}
+
+function addExecutiveSummarySlide(ctx, analysis) {
+  const slide = createSlide(ctx, { section: "Executive Narrative" });
+  addSlideTitle(slide, ctx, "Executive Summary");
+  addSectionSubtitle(slide, ctx, "Headline + takeaway + evidence format is used across all sections.");
+
+  const summary = analysis.executiveSummary || {};
+  const strengths = toArray(summary.strengths).slice(0, 6);
+  const concerns = toArray(summary.concerns).slice(0, 6);
+
+  addInsightCard(slide, ctx, {
+    x: SLIDE.M,
+    y: 1.2,
+    w: (SLIDE.W - (SLIDE.M * 2) - 0.2) / 2,
+    h: 3.0,
+    title: "Strengths",
+    takeaway: strengths.length ? sanitizeText(strengths[0], 98) : "No strengths were provided in analysis.",
+    evidence: strengths,
+    tone: "positive",
   });
 
-  const categories = pl.categories;
-  const catCount = Math.min(categories.length, 7);
-  const totalW = W - 2 * M;
-  const cardGap = 0.12;
-  const cardW = (totalW - (catCount - 1) * cardGap) / catCount;
-  const cardY = 3.7;
+  addInsightCard(slide, ctx, {
+    x: SLIDE.M + ((SLIDE.W - (SLIDE.M * 2) - 0.2) / 2) + 0.2,
+    y: 1.2,
+    w: (SLIDE.W - (SLIDE.M * 2) - 0.2) / 2,
+    h: 3.0,
+    title: "Concerns",
+    takeaway: concerns.length ? sanitizeText(concerns[0], 98) : "No concerns were provided in analysis.",
+    evidence: concerns,
+    tone: "critical",
+  });
+}
 
-  categories.slice(0, 7).forEach((cat, i) => {
-    const cx = M + i * (cardW + cardGap);
-    const catColor = resolveColor(cat.colorKey);
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: 1.3,
-      fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: 0.04,
-      fill: { color: catColor }
-    });
-    slide.addText(String(cat.count), {
-      x: cx, y: cardY + 0.15, w: cardW, h: 0.5,
-      fontSize: 24, fontFace: FONT, bold: true, color: catColor,
-      align: "center", margin: 0
-    });
-    slide.addText(cat.label, {
-      x: cx + 0.05, y: cardY + 0.7, w: cardW - 0.1, h: 0.5,
-      fontSize: 8, fontFace: FONT_LIGHT, color: C.muted,
-      align: "center", margin: 0
+function addTopPrioritiesSlides(ctx, analysis) {
+  const priorities = collectTopPriorities(analysis);
+  if (!priorities.length) return;
+  const pages = chunk(priorities, CONTENT_LIMITS.executiveCardsPerSlide);
+
+  pages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Executive Narrative" });
+    addSlideTitle(slide, ctx, pageIndex === 0 ? "Top Priorities" : `Top Priorities (${pageIndex + 1}/${pages.length})`);
+    addSectionSubtitle(
+      slide,
+      ctx,
+      "These actions represent the highest leverage improvements for the next review cycle."
+    );
+
+    page.forEach((item, index) => {
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M,
+        y: 1.2 + (index * 0.9),
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.8,
+        title: item.title,
+        takeaway: item.evidence || `Priority: ${item.priority}`,
+        evidence: [],
+        tone: getSeverityTone(item.priority),
+      });
     });
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SECTION B: DEEP ANALYSIS (conditional slides)
-// ═══════════════════════════════════════════════════════════════
+function addRoadmapSlides(ctx, analysis) {
+  const roadmap = buildRoadmap(analysis);
+  if (!roadmap.nearTerm.length && !roadmap.midTerm.length) return;
 
-function addGeolocationStrategy(pres, analysis) {
+  const nearPages = chunk(roadmap.nearTerm, CONTENT_LIMITS.roadmapItemsPerColumn);
+  const midPages = chunk(roadmap.midTerm, CONTENT_LIMITS.roadmapItemsPerColumn);
+  const pageCount = Math.max(nearPages.length, midPages.length);
+
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+    const slide = createSlide(ctx, { section: "Executive Narrative" });
+    addSlideTitle(
+      slide,
+      ctx,
+      pageCount === 1 ? "90-Day Roadmap" : `90-Day Roadmap (${pageIndex + 1}/${pageCount})`
+    );
+    addSectionSubtitle(
+      slide,
+      ctx,
+      "Near-term items are immediate risk reducers. Mid-term items sustain posture improvements."
+    );
+
+    addInsightCard(slide, ctx, {
+      x: SLIDE.M,
+      y: 1.2,
+      w: (SLIDE.W - (SLIDE.M * 2) - 0.25) / 2,
+      h: 3.3,
+      title: "Near-term actions (0-45 days)",
+      takeaway: "Execute first to reduce active exposure and remove stale report-only controls.",
+      evidence: (nearPages[pageIndex] || []).map((item) => item.title),
+      tone: "critical",
+    });
+
+    addInsightCard(slide, ctx, {
+      x: SLIDE.M + ((SLIDE.W - (SLIDE.M * 2) - 0.25) / 2) + 0.25,
+      y: 1.2,
+      w: (SLIDE.W - (SLIDE.M * 2) - 0.25) / 2,
+      h: 3.3,
+      title: "Mid-term actions (45-90 days)",
+      takeaway: "Use these actions to harden role coverage and simplify policy operations.",
+      evidence: (midPages[pageIndex] || []).map((item) => item.title),
+      tone: "caution",
+    });
+  }
+}
+
+function addEvidenceDividerSlide(ctx) {
+  const slide = createSlide(ctx, { section: "Supporting Analysis" });
+  slide.addText("Supporting Analysis", {
+    x: SLIDE.M,
+    y: 1.75,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.6,
+    fontFace: ctx.theme.typography.title,
+    fontSize: 42,
+    bold: true,
+    color: ctx.theme.palette.textStrong,
+    align: "center",
+    margin: 0,
+  });
+  slide.addText("Control evidence and policy-level detail that supports the executive narrative.", {
+    x: SLIDE.M,
+    y: 2.38,
+    w: SLIDE.W - (SLIDE.M * 2),
+    h: 0.24,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 12,
+    color: ctx.theme.palette.textMuted,
+    align: "center",
+    margin: 0,
+  });
+  slide.addShape(ctx.pres.shapes.LINE, {
+    x: 3.05,
+    y: 2.9,
+    w: 3.9,
+    h: 0,
+    line: { color: ctx.theme.palette.brandSoft, width: 1.5 },
+  });
+  slide.addText("Policy landscape | Geo strategy | MFA matrix | Risk controls | Auth strengths | PIM | Report-only | MS-managed overlap | Recommendations", {
+    x: 1.1,
+    y: 3.15,
+    w: 7.8,
+    h: 0.5,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 10,
+    color: ctx.theme.palette.textSubtle,
+    align: "center",
+    margin: 0,
+  });
+}
+
+function addPolicyLandscapeSlides(ctx, analysis) {
+  const landscape = analysis.policyLandscape || {};
+  const categories = toArray(landscape.categories);
+  const categoryPages = chunk(categories, CONTENT_LIMITS.categoryCardsPerSlide);
+  const meta = analysis.meta || {};
+  const policyCount = meta.policyCount || Math.max(1, ctx.policies.length);
+  const enabledCount = meta.enabledCount || ctx.policies.filter((p) => p.state === "enabled").length;
+  const reportOnlyCount = meta.reportOnlyCount || ctx.policies.filter((p) => p.state === "report_only").length;
+  const disabledCount = meta.disabledCount || ctx.policies.filter((p) => p.state === "disabled").length;
+
+  categoryPages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const headline = `${enabledCount}/${policyCount} policies are enforced. ${reportOnlyCount} remain in report-only mode.`;
+    const takeaway = reportOnlyCount > 0
+      ? "Prioritize report-only conversions in parallel with high-severity gaps."
+      : "Report-only backlog is clear; focus can shift to control tuning.";
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pageIndex === 0 ? "Policy Landscape" : `Policy Landscape (${pageIndex + 1}/${categoryPages.length})`,
+      headline,
+      takeaway
+    );
+
+    const barData = [
+      { label: "Enabled", value: enabledCount, tone: "positive" },
+      { label: "Report-only", value: reportOnlyCount, tone: "caution" },
+      { label: "Disabled", value: disabledCount, tone: "critical" },
+    ];
+
+    barData.forEach((item, index) => {
+      const y = startY + (index * 0.37);
+      const width = clamp((item.value / Math.max(1, policyCount)) * 4.5, 0.3, 4.5);
+      const tone = getToneColors(ctx.theme, item.tone);
+      slide.addText(item.label, {
+        x: SLIDE.M,
+        y,
+        w: 1.3,
+        h: 0.2,
+        fontFace: ctx.theme.typography.body,
+        fontSize: 9,
+        color: ctx.theme.palette.textMuted,
+        margin: 0,
+      });
+      slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+        x: SLIDE.M + 1.35,
+        y: y + 0.02,
+        w: width,
+        h: 0.17,
+        fill: { color: tone.strong },
+        line: { color: tone.strong, width: 0.1 },
+        rectRadius: ctx.theme.radii.sm,
+      });
+      slide.addText(String(item.value), {
+        x: SLIDE.M + 1.35 + width + 0.08,
+        y,
+        w: 0.8,
+        h: 0.2,
+        fontFace: ctx.theme.typography.body,
+        fontSize: 9,
+        bold: true,
+        color: tone.strong,
+        margin: 0,
+      });
+    });
+
+    const cardY = startY + 1.25;
+    const cardW = (SLIDE.W - (SLIDE.M * 2) - 0.25) / 3;
+    const cardH = 1.2;
+    page.forEach((category, index) => {
+      const row = Math.floor(index / 3);
+      const col = index % 3;
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M + (col * (cardW + 0.125)),
+        y: cardY + (row * (cardH + 0.15)),
+        w: cardW,
+        h: cardH,
+        title: sanitizeText(category.label, 36).replace(/\n/g, " "),
+        takeaway: `${category.count || 0} policies`,
+        evidence: [],
+        tone: "neutral",
+      });
+    });
+  });
+}
+
+function addGeolocationSlides(ctx, analysis) {
   const geo = analysis.geolocationStrategy;
   if (!geo || !geo.available) return;
+  const layers = toArray(geo.layers);
+  if (!layers.length) return;
+  const pages = chunk(layers, CONTENT_LIMITS.layerCardsPerSlide);
 
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
+  pages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pageIndex === 0 ? "Geolocation Strategy" : `Geolocation Strategy (${pageIndex + 1}/${pages.length})`,
+      `${layers.length} geolocation layers are active in the tenant posture.`,
+      sanitizeText(pickFirst(geo.note, "Layered controls should align with named locations and report-only exits."), 140)
+    );
 
-  slide.addText("Geolocation Strategy", {
-    x: M, y: 0.2, w: 5, h: 0.4,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-  slide.addText("Layered Defense-in-Depth", {
-    x: M, y: 0.6, w: 5, h: 0.3,
-    fontSize: 12, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-  });
+    const cardW = SLIDE.W - (SLIDE.M * 2);
+    const cardH = 1.05;
+    page.forEach((layer, index) => {
+      const evidence = [];
+      if (hasValue(layer.description)) evidence.push(layer.description);
+      if (toArray(layer.countries).length) {
+        const countrySummary = toArray(layer.countries)
+          .slice(0, 4)
+          .map((country) => `${sanitizeText(country.name, 24)} (${sanitizeText(country.state, 12)})`)
+          .join(", ");
+        evidence.push(countrySummary);
+      }
+      if (hasValue(layer.locationCount)) evidence.push(`${layer.locationCount} trusted locations`);
 
-  const layerX = M;
-  const layerW = W - 2 * M;
-  const layers = geo.layers || [];
-
-  let curY = 1.05;
-
-  layers.forEach((layer) => {
-    const accentColor = resolveColor(layer.accentColor);
-
-    if (layer.countries) {
-      // Layer with country list
-      const countries = layer.countries || [];
-      const rows = Math.ceil(countries.length / 4);
-      const layerH = 0.6 + rows * 0.25 + 0.15;
-
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: layerW, h: layerH,
-        fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M,
+        y: startY + (index * (cardH + 0.16)),
+        w: cardW,
+        h: cardH,
+        title: `Layer ${sanitizeText(layer.id, 4)} - ${sanitizeText(layer.title, 70)}`,
+        takeaway: evidence[0] || "No additional detail provided.",
+        evidence: evidence.slice(1),
+        tone: "neutral",
       });
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: 0.04, h: layerH,
-        fill: { color: accentColor }
-      });
-      slide.addText(`LAYER ${layer.id}`, {
-        x: layerX + 0.15, y: curY + 0.05, w: 1.0, h: 0.2,
-        fontSize: 8, fontFace: FONT, bold: true, color: accentColor, charSpacing: 1.5, margin: 0
-      });
-      slide.addText(layer.title, {
-        x: layerX + 0.15, y: curY + 0.3, w: 3, h: 0.2,
-        fontSize: 11, fontFace: FONT, bold: true, color: C.white, margin: 0
-      });
-
-      countries.forEach((co, ci) => {
-        const row = Math.floor(ci / 4);
-        const col = ci % 4;
-        const cx = layerX + 0.15 + col * 2.0;
-        const cy = curY + 0.6 + row * 0.25;
-        const sc = co.state === "Enabled" ? C.green : C.amber;
-        slide.addText(co.name, {
-          x: cx, y: cy, w: 1.3, h: 0.2,
-          fontSize: 8, fontFace: FONT, color: C.white, margin: 0
-        });
-        slide.addText(co.state, {
-          x: cx + 1.3, y: cy, w: 0.6, h: 0.2,
-          fontSize: 7, fontFace: FONT, bold: true, color: sc, margin: 0
-        });
-      });
-
-      curY += layerH + 0.15;
-    } else if (layer.locationCount != null) {
-      // Layer with location count
-      const layerH = 0.95;
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: layerW, h: layerH,
-        fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-      });
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: 0.04, h: layerH,
-        fill: { color: accentColor }
-      });
-      slide.addText(`LAYER ${layer.id}`, {
-        x: layerX + 0.15, y: curY + 0.05, w: 1.0, h: 0.2,
-        fontSize: 8, fontFace: FONT, bold: true, color: accentColor, charSpacing: 1.5, margin: 0
-      });
-      slide.addText(layer.title, {
-        x: layerX + 0.15, y: curY + 0.3, w: 5, h: 0.2,
-        fontSize: 11, fontFace: FONT, bold: true, color: C.white, margin: 0
-      });
-      // Count badge
-      slide.addShape(pres.shapes.OVAL, {
-        x: layerX + 6.5, y: curY + 0.1, w: 0.7, h: 0.7,
-        fill: { color: C.circle }, line: { color: C.teal, width: 1 }
-      });
-      slide.addText(String(layer.locationCount), {
-        x: layerX + 6.5, y: curY + 0.1, w: 0.7, h: 0.7,
-        fontSize: 20, fontFace: FONT, bold: true, color: C.teal,
-        align: "center", valign: "middle", margin: 0
-      });
-      slide.addText("LOCATIONS", {
-        x: layerX + 7.3, y: curY + 0.3, w: 1.5, h: 0.2,
-        fontSize: 8, fontFace: FONT, bold: true, color: C.muted, charSpacing: 1, margin: 0
-      });
-      slide.addText(layer.description, {
-        x: layerX + 0.15, y: curY + 0.6, w: layerW - 0.3, h: 0.3,
-        fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-      });
-      curY += layerH + 0.15;
-    } else {
-      // Simple description layer
-      const layerH = 1.0;
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: layerW, h: layerH,
-        fill: { color: C.bgCard }, line: { color: accentColor, width: 0.8 }
-      });
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: layerX, y: curY, w: 0.04, h: layerH,
-        fill: { color: accentColor }
-      });
-      slide.addText(`LAYER ${layer.id}`, {
-        x: layerX + 0.15, y: curY + 0.05, w: 1.0, h: 0.2,
-        fontSize: 8, fontFace: FONT, bold: true, color: accentColor, charSpacing: 1.5, margin: 0
-      });
-
-      // Enabled badge
-      slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-        x: layerX + 1.2, y: curY + 0.03, w: 0.85, h: 0.22,
-        fill: { color: C.greenDim }, rectRadius: 0.03
-      });
-      slide.addText("ENABLED", {
-        x: layerX + 1.2, y: curY + 0.03, w: 0.85, h: 0.22,
-        fontSize: 7, fontFace: FONT, bold: true, color: C.green, align: "center", margin: 0
-      });
-
-      slide.addText(layer.title, {
-        x: layerX + 0.15, y: curY + 0.3, w: 3, h: 0.2,
-        fontSize: 11, fontFace: FONT, bold: true, color: C.white, margin: 0
-      });
-      slide.addText(layer.description, {
-        x: layerX + 0.15, y: curY + 0.55, w: layerW - 0.3, h: 0.35,
-        fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-      });
-      curY += layerH + 0.15;
-    }
-  });
-
-  if (geo.note) {
-    slide.addText(`Note: ${geo.note}`, {
-      x: M, y: Math.min(curY + 0.1, 4.95), w: W - 2 * M, h: 0.3,
-      fontSize: 8, fontFace: FONT_LIGHT, italic: true, color: C.muted, margin: 0
     });
-  }
+  });
 }
 
-function addMfaMatrix(pres, analysis) {
+function addMfaMatrixSlides(ctx, analysis) {
   const mfa = analysis.mfaMatrix;
   if (!mfa || !mfa.available) return;
+  const rows = toArray(mfa.policies).map((item) => [
+    sanitizeText(item.name, 52),
+    sanitizeText(item.scope, 42),
+    sanitizeText(item.authStrength, 36),
+    sanitizeText(item.frequency, 22),
+    sanitizeText(item.conditions, 44),
+  ]);
+  if (!rows.length) return;
 
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
+  const pages = chunk(rows, CONTENT_LIMITS.tableRows.mfa);
+  pages.forEach((pageRows, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "MFA Enforcement Matrix" : `MFA Enforcement Matrix (${pageIndex + 1}/${pages.length})`,
+      `${rows.length} MFA policy entries were analyzed for scope and control strength.`,
+      "Confirm report-only MFA policies have transition plans to enforcement."
+    );
 
-  slide.addText("MFA Enforcement Matrix", {
-    x: M, y: 0.2, w: W - 2 * M, h: 0.45,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
+    const headers = [
+      { label: "Policy" },
+      { label: "Scope" },
+      { label: "Auth strength" },
+      { label: "Frequency", align: "center" },
+      { label: "Conditions" },
+    ];
+    const formatted = buildTableRows(ctx, headers, pageRows);
+    const tableRowH = 0.28;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.95);
+    addTableWrapper(slide, ctx, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: tableH,
+      rows: formatted,
+      colW: [2.2, 1.7, 1.7, 1.0, 2.4],
+      rowH: tableRowH,
+    });
+
+    if (pageIndex === 0 && mfa.callout) {
+      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      addCalloutBox(slide, ctx, {
+        x: SLIDE.M,
+        y: calloutY,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.72,
+        title: sanitizeText(mfa.callout.title, 52),
+        text: sanitizeText(mfa.callout.text, 160),
+        tone: "caution",
+      });
+    }
   });
-
-  const headerRow = [
-    { text: "Policy", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Scope", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Auth Strength", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Frequency", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Conditions", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-  ];
-
-  const rows = [headerRow];
-  mfa.policies.forEach((d, i) => {
-    const rowFill = i % 2 === 0 ? C.bgCard : C.bg;
-    rows.push([
-      { text: d.name, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.scope, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.authStrength, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.frequency || "\u2014", options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.conditions || "\u2014", options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-    ]);
-  });
-
-  slide.addTable(rows, {
-    x: M, y: 0.8, w: W - 2 * M,
-    colW: [2.0, 2.0, 1.5, 1.0, 2.2],
-    border: { pt: 0.5, color: C.border },
-    rowH: 0.4, autoPage: false
-  });
-
-  if (mfa.callout) {
-    const callY = 0.8 + (rows.length) * 0.4 + 0.3;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: W - 2 * M, h: 0.7,
-      fill: { color: C.bgCard }, line: { color: C.amber, width: 0.8 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: 0.04, h: 0.7,
-      fill: { color: C.amber }
-    });
-    slide.addText(mfa.callout.title, {
-      x: M + 0.15, y: callY + 0.05, w: W - 2 * M - 0.3, h: 0.25,
-      fontSize: 10, fontFace: FONT, bold: true, color: C.amber, margin: 0
-    });
-    slide.addText(mfa.callout.text, {
-      x: M + 0.15, y: callY + 0.35, w: W - 2 * M - 0.3, h: 0.25,
-      fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
-  }
 }
 
-function addRiskPolicies(pres, analysis) {
+function addRiskPolicySlides(ctx, analysis) {
   const risk = analysis.riskPolicies;
   if (!risk || !risk.available) return;
+  const cards = toArray(risk.policies);
+  if (!cards.length) return;
+  const pages = chunk(cards, CONTENT_LIMITS.riskCardsPerSlide);
 
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
+  pages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Identity Risk Policies" : `Identity Risk Policies (${pageIndex + 1}/${pages.length})`,
+      `${cards.length} risk-focused policies were mapped to user and sign-in conditions.`,
+      "High-risk users and high-risk sign-ins should have explicit enforcement and recovery paths."
+    );
 
-  slide.addText("Identity Protection & Risk-Based Policies", {
-    x: M, y: 0.2, w: W - 2 * M, h: 0.45,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-
-  const cards = risk.policies;
-  const cardCount = Math.min(cards.length, 3);
-  const cardGap = 0.3;
-  const cardW = (W - 2 * M - (cardCount - 1) * cardGap) / cardCount;
-  const cardY = 0.9;
-  const cardH = 2.9;
-
-  cards.slice(0, 3).forEach((card, i) => {
-    const cx = M + i * (cardW + cardGap);
-    const accentColor = resolveColor(card.accentColor);
-
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: cardH,
-      fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: 0.04,
-      fill: { color: accentColor }
-    });
-
-    slide.addText(card.title, {
-      x: cx + 0.15, y: cardY + 0.15, w: cardW - 0.3, h: 0.3,
-      fontSize: 13, fontFace: FONT, bold: true, color: C.white, margin: 0
-    });
-    slide.addText(card.policyName, {
-      x: cx + 0.15, y: cardY + 0.5, w: cardW - 0.3, h: 0.25,
-      fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
-
-    const fields = [
-      { label: "Grant Control", value: card.grantControl },
-      { label: "Operator", value: card.operator },
-      { label: "Scope", value: card.scope },
-      { label: "Modified:", value: card.modified },
-    ];
-    fields.forEach((f, fi) => {
-      const fy = cardY + 0.9 + fi * 0.45;
-      slide.addText(f.label, {
-        x: cx + 0.15, y: fy, w: cardW - 0.3, h: 0.18,
-        fontSize: 8, fontFace: FONT, bold: true, color: C.mutedDark, margin: 0
-      });
-      slide.addText(f.value || "\u2014", {
-        x: cx + 0.15, y: fy + 0.18, w: cardW - 0.3, h: 0.2,
-        fontSize: 10, fontFace: FONT, color: C.white, margin: 0
+    const gap = 0.18;
+    const cardW = (SLIDE.W - (SLIDE.M * 2) - (gap * (page.length - 1))) / Math.max(1, page.length);
+    page.forEach((item, index) => {
+      const evidence = [
+        `Grant control: ${sanitizeText(item.grantControl, 44)}`,
+        `Operator: ${sanitizeText(item.operator, 28)}`,
+        `Scope: ${sanitizeText(item.scope, 44)}`,
+        `Modified: ${sanitizeText(item.modified, 20)}`,
+      ];
+      const tone = getSeverityTone(item.title);
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M + (index * (cardW + gap)),
+        y: startY,
+        w: cardW,
+        h: 2.95,
+        title: sanitizeText(item.title, 38),
+        takeaway: sanitizeText(item.policyName, 60),
+        evidence,
+        tone,
       });
     });
-  });
 
-  if (risk.callout) {
-    const callY = 4.15;
-    const callColor = resolveColor(risk.callout.color || "green");
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: W - 2 * M, h: 0.6,
-      fill: { color: C.bgCard }, line: { color: callColor, width: 0.8 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: 0.04, h: 0.6,
-      fill: { color: callColor }
-    });
-    slide.addText(risk.callout.text, {
-      x: M + 0.15, y: callY + 0.1, w: W - 2 * M - 0.3, h: 0.4,
-      fontSize: 10, fontFace: FONT, bold: true, color: callColor, margin: 0
-    });
-  }
+    if (pageIndex === 0 && risk.callout) {
+      addCalloutBox(slide, ctx, {
+        x: SLIDE.M,
+        y: 4.45,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.65,
+        title: "Risk takeaway",
+        text: sanitizeText(risk.callout.text, 160),
+        tone: getSeverityTone(risk.callout.color),
+      });
+    }
+  });
 }
 
-function addAuthStrengths(pres, analysis) {
+function addAuthStrengthSlides(ctx, analysis) {
   const auth = analysis.authStrengths;
   if (!auth || !auth.available) return;
+  const strengths = toArray(auth.strengths);
+  if (!strengths.length) return;
+  const pages = chunk(strengths, CONTENT_LIMITS.authCardsPerSlide);
 
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
+  pages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Authentication Strengths" : `Authentication Strengths (${pageIndex + 1}/${pages.length})`,
+      `${strengths.length} authentication strengths were evaluated for resistance and deployability.`,
+      "Remove phishable factors from admin-facing strengths and map each strength to policy scope."
+    );
 
-  slide.addText("Authentication Strength Policies", {
-    x: M, y: 0.2, w: W - 2 * M, h: 0.45,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-
-  const strengths = auth.strengths.slice(0, 4);
-  const cardCount = strengths.length;
-  const cardGap = 0.2;
-  const cardW = (W - 2 * M - (cardCount - 1) * cardGap) / cardCount;
-  const cardY = 0.85;
-  const cardH = 4.2;
-
-  strengths.forEach((s, i) => {
-    const cx = M + i * (cardW + cardGap);
-    const rColor = resolveColor(s.ratingColor);
-
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: cardH,
-      fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cardY, w: cardW, h: 0.04,
-      fill: { color: rColor }
-    });
-
-    slide.addText(s.name, {
-      x: cx + 0.12, y: cardY + 0.2, w: cardW - 0.24, h: 0.35,
-      fontSize: 12, fontFace: FONT, bold: true, color: C.white, margin: 0
-    });
-
-    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-      x: cx + 0.12, y: cardY + 0.65, w: 1.0, h: 0.25,
-      fill: { color: resolveRatingDim(s.ratingColor) }, rectRadius: 0.03
-    });
-    slide.addText(s.rating, {
-      x: cx + 0.12, y: cardY + 0.65, w: 1.0, h: 0.25,
-      fontSize: 9, fontFace: FONT, bold: true, color: rColor,
-      align: "center", valign: "middle", margin: 0
-    });
-
-    const fields = [
-      { label: "Type:", value: s.type },
-      { label: "Methods:", value: s.methods },
-    ];
-    fields.forEach((f, fi) => {
-      const fy = cardY + 1.15 + fi * 0.7;
-      slide.addText(f.label, {
-        x: cx + 0.12, y: fy, w: cardW - 0.24, h: 0.2,
-        fontSize: 8, fontFace: FONT, bold: true, color: C.mutedDark, margin: 0
-      });
-      slide.addText(f.value, {
-        x: cx + 0.12, y: fy + 0.2, w: cardW - 0.24, h: 0.35,
-        fontSize: 9, fontFace: FONT_LIGHT, color: C.white, margin: 0
+    const cardW = (SLIDE.W - (SLIDE.M * 2) - 0.18) / 2;
+    const cardH = 1.45;
+    page.forEach((item, index) => {
+      const row = Math.floor(index / 2);
+      const col = index % 2;
+      const tone = getSeverityTone(item.rating);
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M + (col * (cardW + 0.18)),
+        y: startY + (row * (cardH + 0.16)),
+        w: cardW,
+        h: cardH,
+        title: `${sanitizeText(item.name, 52)} (${sanitizeText(item.rating, 16)})`,
+        takeaway: `Type: ${sanitizeText(item.type, 20)} | Methods: ${sanitizeText(item.methods, 55)}`,
+        evidence: hasValue(item.note) ? [item.note] : [],
+        tone,
       });
     });
-
-    if (s.note) {
-      const noteColor = s.rating === "Weak" ? C.red : C.muted;
-      slide.addText(s.note, {
-        x: cx + 0.12, y: cardY + 2.85, w: cardW - 0.24, h: 0.5,
-        fontSize: 9, fontFace: FONT_LIGHT, italic: true, color: noteColor, margin: 0
-      });
-    }
   });
 }
 
-function addPimCoverage(pres, analysis) {
+function addPimCoverageSlides(ctx, analysis) {
   const pim = analysis.pimCoverage;
   if (!pim || !pim.available) return;
+  const rows = toArray(pim.roles).map((item) => [
+    sanitizeText(item.role, 44),
+    sanitizeText(item.eligible, 10),
+    sanitizeText(item.active, 10),
+    sanitizeText(item.caCoverage, 52),
+    sanitizeText(item.direct, 12),
+  ]);
+  if (!rows.length) return;
+  const pages = chunk(rows, CONTENT_LIMITS.tableRows.pim);
 
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
+  pages.forEach((pageRows, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Privileged Access Coverage" : `Privileged Access Coverage (${pageIndex + 1}/${pages.length})`,
+      `${rows.length} privileged roles were compared against Conditional Access targeting.`,
+      "Roles without direct policy coverage should be prioritized in roadmap planning."
+    );
 
-  slide.addText("Privileged Access \u2014 PIM Role Coverage", {
-    x: M, y: 0.2, w: W - 2 * M, h: 0.4,
-    fontSize: 20, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-  slide.addText("Cross-referencing PIM role assignments against Conditional Access policy targeting.", {
-    x: M, y: 0.6, w: W - 2 * M, h: 0.25,
-    fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-  });
-
-  const headerRow = [
-    { text: "PIM Role", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Eligible", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-    { text: "Active", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-    { text: "CA Policy Coverage", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Direct?", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-  ];
-
-  const rows = [headerRow];
-  pim.roles.slice(0, 10).forEach((d, i) => {
-    const rowFill = i % 2 === 0 ? C.bgCard : C.bg;
-    const directColor = d.direct === "Yes" ? C.green : d.direct === "Partial" ? C.amber : C.red;
-    rows.push([
-      { text: d.role, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.white } },
-      { text: d.eligible, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.muted, align: "center" } },
-      { text: d.active, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.muted, align: "center" } },
-      { text: d.caCoverage, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.direct, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, bold: true, color: directColor, align: "center" } },
-    ]);
-  });
-
-  slide.addTable(rows, {
-    x: M, y: 0.95, w: W - 2 * M,
-    colW: [2.0, 0.7, 0.7, 3.4, 0.8],
-    border: { pt: 0.5, color: C.border },
-    rowH: 0.3, autoPage: false
-  });
-
-  if (pim.note) {
-    slide.addText(pim.note, {
-      x: M, y: 0.95 + rows.length * 0.3 + 0.15, w: W - 2 * M, h: 0.6,
-      fontSize: 8, fontFace: FONT_LIGHT, italic: true, color: C.mutedDark, margin: 0
-    });
-  }
-}
-
-function addReportOnlyPipeline(pres, analysis) {
-  const ro = analysis.reportOnlyPipeline;
-  if (!ro || !ro.policies || ro.policies.length === 0) return;
-
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-
-  slide.addText("Report-Only Pipeline", {
-    x: M, y: 0.2, w: 5, h: 0.4,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-  slide.addText("Policies Under Evaluation", {
-    x: M, y: 0.6, w: 5, h: 0.25,
-    fontSize: 11, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-  });
-
-  const headerRow = [
-    { text: "Policy", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Grant Control", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Target Apps", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-    { text: "Modified", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-    { text: "Priority", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-  ];
-
-  const rows = [headerRow];
-  ro.policies.slice(0, 7).forEach((d, i) => {
-    const rowFill = i % 2 === 0 ? C.bgCard : C.bg;
-    const prioColor = d.priority === "High" ? C.red : d.priority === "Medium" ? C.amber : C.muted;
-    rows.push([
-      { text: d.name, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.white } },
-      { text: d.grantControl, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.targetApps || "\u2014", options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.muted } },
-      { text: d.modified || "\u2014", options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.muted, align: "center" } },
-      { text: d.priority, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, bold: true, color: prioColor, align: "center" } },
-    ]);
-  });
-
-  slide.addTable(rows, {
-    x: M, y: 0.95, w: W - 2 * M,
-    colW: [2.5, 1.5, 2.0, 1.1, 0.8],
-    border: { pt: 0.5, color: C.border },
-    rowH: 0.3, autoPage: false
-  });
-
-  if (ro.callout) {
-    const callY = 0.95 + rows.length * 0.3 + 0.2;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: W - 2 * M, h: 1.0,
-      fill: { color: C.bgCard }, line: { color: C.red, width: 0.8 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: 0.04, h: 1.0,
-      fill: { color: C.red }
-    });
-    slide.addText(ro.callout.title, {
-      x: M + 0.15, y: callY + 0.1, w: W - 2 * M - 0.3, h: 0.25,
-      fontSize: 11, fontFace: FONT, bold: true, color: C.red, margin: 0
-    });
-    slide.addText(ro.callout.text, {
-      x: M + 0.15, y: callY + 0.4, w: W - 2 * M - 0.3, h: 0.5,
-      fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
-  }
-}
-
-function addMsManagedOverlap(pres, analysis) {
-  const ms = analysis.msManagedOverlap;
-  if (!ms || !ms.policies || ms.policies.length === 0) return;
-
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-
-  slide.addText("Microsoft-Managed Policies", {
-    x: M, y: 0.2, w: 5, h: 0.4,
-    fontSize: 22, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-  slide.addText(`Overlap Analysis \u2014 All ${ms.policies.length} auto-created policies are disabled`, {
-    x: M, y: 0.6, w: W - 2 * M, h: 0.25,
-    fontSize: 11, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-  });
-
-  const headerRow = [
-    { text: "MS-Managed Policy", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 7.5, fontFace: FONT } },
-    { text: "What It Does", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 7.5, fontFace: FONT } },
-    { text: "Custom Equivalent", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 7.5, fontFace: FONT } },
-    { text: "Overlap", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 7.5, fontFace: FONT, align: "center" } },
-  ];
-
-  const rows = [headerRow];
-  ms.policies.forEach((d, i) => {
-    const rowFill = i % 2 === 0 ? C.bgCard : C.bg;
-    const overlapColor = d.overlap === "Full" ? C.green : d.overlap === "Partial" ? C.amber : C.red;
-    rows.push([
-      { text: d.name, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, color: C.white } },
-      { text: d.description, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.muted } },
-      { text: d.customEquivalent, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT_LIGHT, color: C.white } },
-      { text: d.overlap, options: { fill: { color: rowFill }, fontSize: 7.5, fontFace: FONT, bold: true, color: overlapColor, align: "center" } },
-    ]);
-  });
-
-  slide.addTable(rows, {
-    x: M, y: 0.95, w: W - 2 * M,
-    colW: [2.5, 2.5, 2.3, 0.8],
-    border: { pt: 0.5, color: C.border },
-    rowH: 0.35, autoPage: false
-  });
-
-  if (ms.callout) {
-    const callY = 0.95 + rows.length * 0.35 + 0.2;
-    const callH = 1.2;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: W - 2 * M, h: callH,
-      fill: { color: C.bgCard }, line: { color: C.red, width: 0.8 }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: M, y: callY, w: 0.04, h: callH,
-      fill: { color: C.red }
-    });
-    slide.addText(ms.callout.title, {
-      x: M + 0.15, y: callY + 0.1, w: W - 2 * M - 0.3, h: 0.3,
-      fontSize: 12, fontFace: FONT, bold: true, color: C.red, margin: 0
-    });
-    slide.addText(ms.callout.text, {
-      x: M + 0.15, y: callY + 0.45, w: W - 2 * M - 0.3, h: 0.65,
-      fontSize: 9, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
-  }
-}
-
-function addRecommendations(pres, analysis) {
-  const rec = analysis.recommendations;
-  if (!rec) return;
-
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-
-  slide.addText("Security Gaps & Recommendations", {
-    x: M, y: 0.25, w: W - 2 * M, h: 0.5,
-    fontSize: 24, fontFace: FONT, bold: true, color: C.white, margin: 0
-  });
-
-  const groups = [
-    { label: "HIGH", color: C.red, dimColor: C.redDim, items: rec.high || [] },
-    { label: "MEDIUM", color: C.amber, dimColor: C.amberDim, items: rec.medium || [] },
-    { label: "LOW", color: C.muted, dimColor: C.bgCard, items: rec.low || [] },
-  ].filter(g => g.items.length > 0);
-
-  let curY = 0.9;
-
-  groups.forEach((group) => {
-    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-      x: M, y: curY, w: 0.8, h: 0.28,
-      fill: { color: group.dimColor }, rectRadius: 0.05
-    });
-    slide.addText(group.label, {
-      x: M, y: curY, w: 0.8, h: 0.28,
-      fontSize: 9, fontFace: FONT, bold: true, color: group.color,
-      align: "center", valign: "middle", margin: 0
-    });
-
-    curY += 0.35;
-
-    group.items.forEach((item) => {
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: M + 0.3, y: curY, w: W - 2 * M - 0.3, h: 0.35,
-        fill: { color: C.bgCard }, line: { color: C.border, width: 0.5 }
-      });
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: M + 0.3, y: curY, w: 0.04, h: 0.35,
-        fill: { color: group.color }
-      });
-      slide.addText(item, {
-        x: M + 0.5, y: curY + 0.03, w: W - 2 * M - 0.8, h: 0.28,
-        fontSize: 10, fontFace: FONT, color: C.white, margin: 0
-      });
-      curY += 0.4;
-    });
-
-    curY += 0.1;
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SECTION C: FULL POLICY MATRIX
-// ═══════════════════════════════════════════════════════════════
-
-function addSummarySlides(pres, policies) {
-  const rowsPerSlide = 18;
-  const pages = Math.ceil(policies.length / rowsPerSlide);
-
-  for (let page = 0; page < pages; page++) {
-    const slide = pres.addSlide();
-    slide.background = { color: C.bg };
-
-    const start = page * rowsPerSlide;
-    const subset = policies.slice(start, start + rowsPerSlide);
-
-    slide.addText(pages > 1 ? `Full Policy Matrix (${page + 1}/${pages})` : "Full Policy Matrix", {
-      x: M, y: 0.25, w: W - 2 * M, h: 0.45,
-      fontSize: 20, fontFace: FONT, bold: true, color: C.white, margin: 0
-    });
-
-    const headerRow = [
-      { text: "#", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-      { text: "Policy Name", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT } },
-      { text: "State", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-      { text: "Action", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
-      { text: "Last Modified", options: { fill: { color: C.tealDark }, color: C.white, bold: true, fontSize: 8, fontFace: FONT, align: "center" } },
+    const headers = [
+      { label: "PIM role" },
+      { label: "Eligible", align: "center" },
+      { label: "Active", align: "center" },
+      { label: "CA coverage" },
+      { label: "Direct", align: "center" },
     ];
+    const tableRowH = 0.27;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.95);
 
-    const rows = [headerRow];
-    subset.forEach((p, i) => {
-      const sc = stateColor(p.state);
-      const rowFill = (start + i) % 2 === 0 ? C.bgCard : C.bg;
-      const action = getAction(p);
-      rows.push([
-        { text: String(start + i + 1), options: { fill: { color: rowFill }, fontSize: 7, fontFace: FONT, align: "center", color: C.muted } },
-        { text: p.name, options: { fill: { color: rowFill }, fontSize: 7, fontFace: FONT, color: C.white } },
-        { text: sc.label, options: { fill: { color: sc.dim }, fontSize: 7, fontFace: FONT, bold: true, color: sc.accent, align: "center" } },
-        { text: action, options: { fill: { color: rowFill }, fontSize: 7, fontFace: FONT, color: action === "Block" ? C.red : C.green, align: "center" } },
-        { text: p.lastModified || "\u2014", options: { fill: { color: rowFill }, fontSize: 7, fontFace: FONT, color: C.muted, align: "center" } },
-      ]);
+    addTableWrapper(slide, ctx, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: tableH,
+      rows: buildTableRows(ctx, headers, pageRows),
+      colW: [2.2, 0.75, 0.75, 4.35, 1.0],
+      rowH: tableRowH,
     });
 
-    slide.addTable(rows, {
-      x: M, y: 0.8, w: W - 2 * M,
-      colW: [0.35, 4.6, 1.3, 0.9, 1.05],
-      border: { pt: 0.5, color: C.border },
-      rowH: 0.24, autoPage: false
+    if (pageIndex === 0 && hasValue(pim.note)) {
+      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      addCalloutBox(slide, ctx, {
+        x: SLIDE.M,
+        y: calloutY,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.72,
+        title: "Coverage note",
+        text: sanitizeText(pim.note, 170),
+        tone: "neutral",
+      });
+    }
+  });
+}
+
+function addReportOnlyPipelineSlides(ctx, analysis) {
+  const pipeline = analysis.reportOnlyPipeline;
+  const policies = pipeline ? toArray(pipeline.policies) : [];
+  if (!policies.length) return;
+  const rows = policies.map((item) => [
+    sanitizeText(item.name, 50),
+    sanitizeText(item.grantControl, 34),
+    sanitizeText(item.targetApps, 36),
+    sanitizeText(item.modified, 20),
+    sanitizeText(item.priority, 10),
+  ]);
+  const pages = chunk(rows, CONTENT_LIMITS.tableRows.reportOnly);
+
+  pages.forEach((pageRows, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Report-only Pipeline" : `Report-only Pipeline (${pageIndex + 1}/${pages.length})`,
+      `${rows.length} report-only entries require staged conversion plans.`,
+      "Use priority and staleness to define conversion waves."
+    );
+
+    const headers = [
+      { label: "Policy" },
+      { label: "Grant control" },
+      { label: "Target apps" },
+      { label: "Modified", align: "center" },
+      { label: "Priority", align: "center" },
+    ];
+    const tableRowH = 0.27;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.9);
+    addTableWrapper(slide, ctx, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: tableH,
+      rows: buildTableRows(ctx, headers, pageRows),
+      colW: [2.45, 1.6, 2.2, 1.2, 0.9],
+      rowH: tableRowH,
+    });
+
+    if (pageIndex === 0 && pipeline.callout) {
+      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      addCalloutBox(slide, ctx, {
+        x: SLIDE.M,
+        y: calloutY,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.72,
+        title: sanitizeText(pipeline.callout.title, 64),
+        text: sanitizeText(pipeline.callout.text, 170),
+        tone: "critical",
+      });
+    }
+  });
+}
+
+function addMsManagedOverlapSlides(ctx, analysis) {
+  const overlap = analysis.msManagedOverlap;
+  const policies = overlap ? toArray(overlap.policies) : [];
+  if (!policies.length) return;
+  const rows = policies.map((item) => [
+    sanitizeText(item.name, 46),
+    sanitizeText(item.description, 56),
+    sanitizeText(item.customEquivalent, 46),
+    sanitizeText(item.overlap, 12),
+  ]);
+  const pages = chunk(rows, CONTENT_LIMITS.tableRows.msManaged);
+
+  pages.forEach((pageRows, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Microsoft-managed Overlap" : `Microsoft-managed Overlap (${pageIndex + 1}/${pages.length})`,
+      `${rows.length} auto-created policies were mapped against custom equivalents.`,
+      "Any overlap marked as Gap should move into the high-priority backlog."
+    );
+
+    const headers = [
+      { label: "MS-managed policy" },
+      { label: "What it does" },
+      { label: "Custom equivalent" },
+      { label: "Overlap", align: "center" },
+    ];
+    const tableRowH = 0.28;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.9);
+    addTableWrapper(slide, ctx, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: tableH,
+      rows: buildTableRows(ctx, headers, pageRows),
+      colW: [2.55, 2.7, 2.75, 1.1],
+      rowH: tableRowH,
+    });
+
+    if (pageIndex === 0 && overlap.callout) {
+      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      addCalloutBox(slide, ctx, {
+        x: SLIDE.M,
+        y: calloutY,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.72,
+        title: sanitizeText(overlap.callout.title, 64),
+        text: sanitizeText(overlap.callout.text, 170),
+        tone: "critical",
+      });
+    }
+  });
+}
+
+function addRecommendationsSlides(ctx, analysis) {
+  const recommendations = analysis.recommendations || {};
+  const rows = [];
+  toArray(recommendations.high).forEach((item) => rows.push({ priority: "High", text: sanitizeText(item, 94) }));
+  toArray(recommendations.medium).forEach((item) => rows.push({ priority: "Medium", text: sanitizeText(item, 94) }));
+  toArray(recommendations.low).forEach((item) => rows.push({ priority: "Low", text: sanitizeText(item, 94) }));
+  if (!rows.length) return;
+
+  const pages = chunk(rows, 6);
+  pages.forEach((page, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Supporting Analysis" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Recommendation Inventory" : `Recommendation Inventory (${pageIndex + 1}/${pages.length})`,
+      `${rows.length} recommendation items were grouped by severity for implementation planning.`,
+      "Drive near-term delivery from the High group and keep Medium on a dated transition plan."
+    );
+
+    page.forEach((item, index) => {
+      const y = startY + (index * 0.58);
+      const tone = getSeverityTone(item.priority);
+      addInsightCard(slide, ctx, {
+        x: SLIDE.M,
+        y,
+        w: SLIDE.W - (SLIDE.M * 2),
+        h: 0.54,
+        title: `${item.priority} priority`,
+        takeaway: item.text,
+        evidence: [],
+        tone,
+      });
+    });
+  });
+}
+
+function addAppendixDividerSlide(ctx, title, subtitle) {
+  const slide = createSlide(ctx, { section: "Appendix" });
+  addAppendixDivider(slide, ctx, title, subtitle);
+}
+
+function buildMatrixRows(policies) {
+  return policies.map((policy, index) => {
+    const scopeSummary = summarizeList(
+      [
+        policy.users.includeUsers !== "Not configured" ? `Users: ${policy.users.includeUsers}` : null,
+        policy.users.includeGroups !== "Not configured" ? `Groups: ${policy.users.includeGroups}` : null,
+        policy.applications.include !== "Not configured" ? `Apps: ${policy.applications.include}` : null,
+      ].filter(Boolean),
+      { maxItems: 2, maxLen: 56 }
+    );
+    return [
+      String(index + 1),
+      policy.name,
+      mapStateLabel(policy.state),
+      policy.action,
+      scopeSummary,
+      policy.lastModified,
+    ];
+  });
+}
+
+function addPolicyMatrixSlides(ctx) {
+  const matrixRows = buildMatrixRows(ctx.policies);
+  const pages = chunk(matrixRows, CONTENT_LIMITS.tableRows.matrix);
+
+  pages.forEach((pageRows, pageIndex) => {
+    const slide = createSlide(ctx, { section: "Appendix" });
+    const startY = addNarrativeHeader(
+      slide,
+      ctx,
+      pages.length === 1 ? "Full Policy Matrix" : `Full Policy Matrix (${pageIndex + 1}/${pages.length})`,
+      `${ctx.policies.length} policies are listed with state, action, scope summary, and modified date.`,
+      "This appendix inventory is optimized for export and audit reference."
+    );
+
+    const headers = [
+      { label: "#", align: "center" },
+      { label: "Policy" },
+      { label: "State", align: "center" },
+      { label: "Action", align: "center" },
+      { label: "Scope summary" },
+      { label: "Modified", align: "center" },
+    ];
+    const tableRowH = 0.24;
+    const tableH = estimateTableHeight(pageRows.length, tableRowH, 2.2, 3.5);
+    addTableWrapper(slide, ctx, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: tableH,
+      rows: buildTableRows(ctx, headers, pageRows),
+      colW: [0.35, 2.7, 0.95, 0.75, 3.3, 1.1],
+      rowH: tableRowH,
+    });
+  });
+}
+
+function collectActiveGrantControls(policy) {
+  return Array.from(new Set(
+    toArray(policy.grantControls.controls)
+      .map((value) => {
+        const normalized = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!normalized || normalized === "notconfigured") return null;
+        if (normalized.includes("block")) return "Block access";
+        if (normalized.includes("mfa") || normalized.includes("multifactor")) return "Multifactor authentication";
+        if (normalized.includes("authenticationstrength") || normalized.includes("authstrength")) return "Authentication strength";
+        if (normalized.includes("compliantdevice")) return "Compliant device";
+        if (normalized.includes("hybridazureadjoined")) return "Hybrid Azure AD joined";
+        if (normalized.includes("approvedclientapp")) return "Approved client app";
+        if (normalized.includes("appprotectionpolicy")) return "App protection policy";
+        if (normalized.includes("changepassword") || normalized.includes("passwordchange")) return "Change password";
+        if (normalized.includes("termsofuse")) return "Terms of use";
+        if (normalized.includes("tokenprotection")) return "Token protection";
+        return sanitizeText(value, 36);
+      })
+      .filter(Boolean)
+      .concat(policy.grantControls.authStrength ? ["Authentication strength"] : [])
+  ));
+}
+
+function collectActiveSessionControls(policy) {
+  return Array.from(new Set(
+    toArray(policy.sessionControls.active)
+      .map((value) => {
+        const normalized = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!normalized || normalized === "notconfigured") return null;
+        if (normalized.includes("appenforcedrestrictions")) return "App enforced restrictions";
+        if (normalized.includes("conditionalaccessappcontrol") || normalized.includes("cloudappsecurity")) {
+          return "Conditional Access App Control";
+        }
+        if (normalized.includes("signinfrequency")) return "Sign-in frequency";
+        if (normalized.includes("persistentbrowser")) return "Persistent browser session";
+        if (normalized.includes("continuousaccessevaluation")) return "Continuous access evaluation";
+        if (normalized.includes("disableresiliencedefaults")) return "Disable resilience defaults";
+        if (normalized.includes("tokenprotection")) return "Token protection";
+        return sanitizeText(value, 36);
+      })
+      .filter(Boolean)
+  ));
+}
+
+function buildPolicyUsersLines(policy) {
+  const lines = [];
+  if (isConfiguredValue(policy.users.includeUsers)) lines.push({ text: `Include users: ${policy.users.includeUsers}`, tone: "positive" });
+  if (isConfiguredValue(policy.users.includeGroups)) lines.push({ text: `Include groups: ${policy.users.includeGroups}`, tone: "positive" });
+  if (isConfiguredValue(policy.users.includeRoles)) lines.push({ text: `Include roles: ${policy.users.includeRoles}`, tone: "positive" });
+  if (isConfiguredValue(policy.users.excludeUsers)) lines.push({ text: `Exclude users: ${policy.users.excludeUsers}`, tone: "critical" });
+  if (isConfiguredValue(policy.users.excludeGroups)) lines.push({ text: `Exclude groups: ${policy.users.excludeGroups}`, tone: "critical" });
+  if (isConfiguredValue(policy.users.excludeRoles)) lines.push({ text: `Exclude roles: ${policy.users.excludeRoles}`, tone: "critical" });
+  if (!lines.length) lines.push({ text: "Not configured", tone: "neutral" });
+  return lines;
+}
+
+function buildPolicyAppLines(policy) {
+  const lines = [];
+  if (isConfiguredValue(policy.applications.include)) lines.push({ text: `Include: ${policy.applications.include}`, tone: "positive" });
+  if (isConfiguredValue(policy.applications.userActions)) lines.push({ text: `Actions: ${policy.applications.userActions}`, tone: "neutral" });
+  if (isConfiguredValue(policy.applications.authContext)) lines.push({ text: `Auth context: ${policy.applications.authContext}`, tone: "neutral" });
+  if (isConfiguredValue(policy.applications.exclude)) lines.push({ text: `Exclude: ${policy.applications.exclude}`, tone: "critical" });
+  if (!lines.length) lines.push({ text: "Not configured", tone: "neutral" });
+  return lines;
+}
+
+function addPolicyDetailPanel(slide, ctx, options) {
+  const tone = options.tone || "neutral";
+  const colors = getToneColors(ctx.theme, tone);
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: options.w,
+    h: options.h,
+    fill: { color: ctx.theme.palette.surface },
+    line: { color: ctx.theme.palette.border, width: 0.6 },
+  });
+  slide.addShape(ctx.pres.shapes.RECTANGLE, {
+    x: options.x,
+    y: options.y,
+    w: 0.03,
+    h: options.h,
+    fill: { color: colors.strong },
+    line: { color: colors.strong, width: 0 },
+  });
+  slide.addText(sanitizeText(options.title, 38).toUpperCase(), {
+    x: options.x + 0.1,
+    y: options.y + 0.07,
+    w: options.w - 0.16,
+    h: 0.2,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 9,
+    bold: true,
+    charSpacing: 1.4,
+    color: ctx.theme.palette.textMuted,
+    margin: 0,
+  });
+
+  if (hasValue(options.subtitle)) {
+    slide.addText(sanitizeText(options.subtitle, 78), {
+      x: options.x + 0.1,
+      y: options.y + 0.28,
+      w: options.w - 0.16,
+      h: 0.2,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      bold: true,
+      color: ctx.theme.palette.textBody,
+      margin: 0,
     });
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SECTION D: PER-POLICY DETAIL
-// ═══════════════════════════════════════════════════════════════
+function addPolicyDetailLines(slide, ctx, options) {
+  const rowStart = options.y + (hasValue(options.subtitle) ? 0.54 : 0.3);
+  const rowH = 0.23;
+  const maxRows = Math.max(1, Math.floor((options.h - (rowStart - options.y) - 0.08) / rowH));
+  const lines = options.lines.slice(0, maxRows);
 
-function addSectionDivider(pres, title, count, accentColor) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: W, h: 0.05,
-    fill: { color: accentColor }
-  });
-
-  slide.addText(title, {
-    x: M, y: 2.0, w: W - 2 * M, h: 0.8,
-    fontSize: 36, fontFace: FONT, bold: true, color: C.white,
-    align: "center", margin: 0
-  });
-
-  slide.addText(`${count} ${count === 1 ? "policy" : "policies"}`, {
-    x: M, y: 2.85, w: W - 2 * M, h: 0.4,
-    fontSize: 15, fontFace: FONT_LIGHT, color: C.muted,
-    align: "center", margin: 0
-  });
-
-  slide.addShape(pres.shapes.OVAL, {
-    x: (W - 0.15) / 2, y: 3.4, w: 0.15, h: 0.15,
-    fill: { color: accentColor }
+  lines.forEach((line, index) => {
+    const tone = line.tone || "neutral";
+    const colors = getToneColors(ctx.theme, tone);
+    slide.addText("- ", {
+      x: options.x + 0.1,
+      y: rowStart + (index * rowH),
+      w: 0.12,
+      h: 0.2,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      bold: true,
+      color: tone === "neutral" ? ctx.theme.palette.textSubtle : colors.strong,
+      margin: 0,
+    });
+    slide.addText(sanitizeText(line.text, 80), {
+      x: options.x + 0.2,
+      y: rowStart + (index * rowH),
+      w: options.w - 0.28,
+      h: 0.2,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      color: tone === "neutral" ? ctx.theme.palette.textMuted : ctx.theme.palette.textBody,
+      margin: 0,
+      shrinkText: true,
+    });
   });
 }
 
-function addPolicySlide(pres, policy, index, total, genDate) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-
-  const sc = stateColor(policy.state);
-  const blocking = isBlockAccess(policy);
-
-  // Header
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: W, h: 0.82,
-    fill: { color: C.bgCard }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: W, h: 0.035,
-    fill: { color: sc.accent }
-  });
-
-  slide.addText(policy.name, {
-    x: M, y: 0.1, w: 6.8, h: 0.45,
-    fontSize: 17, fontFace: FONT, bold: true, color: C.white,
-    margin: 0, shrinkText: true
-  });
-
-  slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-    x: 7.8, y: 0.15, w: 1.8, h: 0.3,
-    fill: { color: sc.dim }, rectRadius: 0.05
-  });
-  slide.addText(sc.label, {
-    x: 7.8, y: 0.15, w: 1.8, h: 0.3,
-    fontSize: 9, fontFace: FONT, bold: true, color: sc.accent,
-    align: "center", valign: "middle", margin: 0
-  });
-
-  if (policy.lastModified) {
-    slide.addText(`Modified: ${policy.lastModified}`, {
-      x: M, y: 0.55, w: 4, h: 0.2,
-      fontSize: 8, fontFace: FONT_LIGHT, color: C.muted, margin: 0
-    });
+function formatLocationChipValue(policy) {
+  if (isConfiguredValue(policy.conditions.locationsInclude) && isConfiguredValue(policy.conditions.locationsExclude)) {
+    return `${policy.conditions.locationsInclude} | excl: ${policy.conditions.locationsExclude}`;
   }
+  if (isConfiguredValue(policy.conditions.locationsInclude)) return policy.conditions.locationsInclude;
+  if (isConfiguredValue(policy.conditions.locationsExclude)) return `Exclude: ${policy.conditions.locationsExclude}`;
+  return "Not configured";
+}
 
-  // Conditions bar
-  const condY = 0.92;
-  const condH = 0.55;
-  const cond = policy.conditions || {};
+function addPolicyConditionRow(slide, ctx, policy, y) {
+  const chips = [
+    { label: "Platforms", value: policy.conditions.platforms },
+    { label: "Locations", value: formatLocationChipValue(policy) },
+    { label: "Client Apps", value: policy.conditions.clientApps },
+    { label: "Risk", value: policy.conditions.risk },
+    { label: "Devices", value: policy.conditions.devices },
+  ];
+  const gap = 0.1;
+  const chipW = (SLIDE.W - (SLIDE.M * 2) - (gap * (chips.length - 1))) / chips.length;
+  const chipH = 0.44;
 
   slide.addText("CONDITIONS", {
-    x: M, y: condY, w: 2, h: 0.18,
-    fontSize: 7, fontFace: FONT, bold: true, color: C.mutedDark,
-    charSpacing: 1.5, margin: 0
+    x: SLIDE.M,
+    y: y - 0.18,
+    w: 1.9,
+    h: 0.16,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 8,
+    bold: true,
+    charSpacing: 2,
+    color: ctx.theme.palette.textSubtle,
+    margin: 0,
   });
 
-  const condItems = [
-    { label: "Platforms", value: cond.platforms, excl: cond.platformsExclude },
-    { label: "Locations", value: cond.locationsInclude, excl: cond.locationsExclude },
-    { label: "Client Apps", value: cond.clientApps },
-    { label: "Risk", value: cond.signInRisk || cond.userRisk },
-    { label: "Devices", value: cond.deviceFilter || cond.authFlow },
+  chips.forEach((chip, index) => {
+    const x = SLIDE.M + (index * (chipW + gap));
+    const active = isConfiguredValue(chip.value);
+    slide.addShape(ctx.pres.shapes.RECTANGLE, {
+      x,
+      y,
+      w: chipW,
+      h: chipH,
+      fill: { color: ctx.theme.palette.surfaceAlt },
+      line: { color: active ? ctx.theme.palette.brandSoft : ctx.theme.palette.border, width: 0.55 },
+    });
+    if (active) {
+      slide.addShape(ctx.pres.shapes.RECTANGLE, {
+        x,
+        y,
+        w: 0.025,
+        h: chipH,
+        fill: { color: ctx.theme.palette.brandSoft },
+        line: { color: ctx.theme.palette.brandSoft, width: 0 },
+      });
+    }
+    slide.addText(chip.label, {
+      x: x + 0.08,
+      y: y + 0.06,
+      w: chipW - 0.12,
+      h: 0.16,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 8,
+      bold: true,
+      color: ctx.theme.palette.textBody,
+      margin: 0,
+    });
+    slide.addText(sanitizeText(chip.value, 46), {
+      x: x + 0.08,
+      y: y + 0.24,
+      w: chipW - 0.12,
+      h: 0.16,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 7.5,
+      color: active ? ctx.theme.palette.textMuted : ctx.theme.palette.textSubtle,
+      margin: 0,
+      shrinkText: true,
+    });
+  });
+}
+
+function addControlChecklist(slide, ctx, options) {
+  const controls = Array.isArray(options.controls) ? options.controls : [];
+  const compact = Boolean(options.compact);
+  const baseRowH = options.rowH || (compact ? 0.14 : 0.175);
+  const minRowH = compact ? 0.11 : 0.13;
+  const markerSize = compact ? 7 : 8;
+  const textSize = compact ? 8 : 8;
+  let subtitle = hasValue(options.subtitle) ? options.subtitle : null;
+  let rowStart = options.y + (hasValue(subtitle) ? 0.54 : 0.32);
+  let available = Math.max(0.08, options.h - (rowStart - options.y) - 0.08);
+  let rowH = controls.length ? Math.min(baseRowH, available / controls.length) : baseRowH;
+
+  if (controls.length && rowH < minRowH && hasValue(subtitle)) {
+    subtitle = null;
+    rowStart = options.y + 0.32;
+    available = Math.max(0.08, options.h - (rowStart - options.y) - 0.08);
+    rowH = Math.min(baseRowH, available / controls.length);
+  }
+
+  const textH = clamp(rowH, 0.1, 0.18);
+
+  addPolicyDetailPanel(slide, ctx, {
+    ...options,
+    subtitle,
+  });
+
+  controls.forEach((control, index) => {
+    const active = options.activeSet.has(control);
+    slide.addText(`[${active ? "x" : " "}]`, {
+      x: options.x + 0.1,
+      y: rowStart + (index * rowH),
+      w: 0.2,
+      h: textH,
+      fontFace: ctx.theme.typography.body,
+      fontSize: markerSize,
+      bold: true,
+      color: active ? ctx.theme.palette.brandSoft : ctx.theme.palette.textSubtle,
+      margin: 0,
+    });
+    slide.addText(sanitizeText(control, 36), {
+      x: options.x + 0.3,
+      y: rowStart + (index * rowH),
+      w: options.w - 0.38,
+      h: textH,
+      fontFace: ctx.theme.typography.body,
+      fontSize: textSize,
+      bold: false,
+      color: active ? ctx.theme.palette.textBody : ctx.theme.palette.textSubtle,
+      margin: 0,
+    });
+  });
+}
+
+function addPolicyDetailSlides(ctx) {
+  const sorted = [
+    ...ctx.policies.filter((policy) => policy.state === "enabled"),
+    ...ctx.policies.filter((policy) => policy.state === "report_only"),
+    ...ctx.policies.filter((policy) => policy.state === "disabled"),
   ];
 
-  const condW = 1.72;
-  const condGapVal = 0.1;
-  condItems.forEach((ci, i) => {
-    const cx = M + i * (condW + condGapVal);
-    const configured = !!ci.value;
-    const cardColor = configured ? C.bgCard : C.bgCardDim;
-    const borderColor = configured ? C.borderTeal : C.border;
+  sorted.forEach((policy, index) => {
+    const slide = createSlide(ctx, { section: "Appendix" });
+    const shortName = sanitizeText(policy.name.replace(/^Microsoft-managed:\s*/i, ""), 110);
+    const stateTone = mapStateTone(policy.state);
+    const actionTone = policy.action === "Block" ? "critical" : "positive";
+    const actionColors = getToneColors(ctx.theme, actionTone);
+    const stateLabel = mapStateLabel(policy.state).toUpperCase();
+    const titleY = 0.32;
+    const titleH = 0.68;
+    const metaY = 1.03;
+    const conditionsY = 1.58;
 
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: condY + 0.2, w: condW, h: condH - 0.2,
-      fill: { color: cardColor },
-      line: { color: borderColor, width: 0.5 }
+    slide.addText(shortName, {
+      x: SLIDE.M,
+      y: titleY,
+      w: SLIDE.W - (SLIDE.M * 2) - 2.4,
+      h: titleH,
+      fontFace: ctx.theme.typography.title,
+      fontSize: 20,
+      bold: true,
+      color: ctx.theme.palette.textStrong,
+      margin: 0,
+      shrinkText: true,
+      valign: "top",
     });
-    if (configured) {
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: cx, y: condY + 0.2, w: 0.03, h: condH - 0.2,
-        fill: { color: C.teal }
-      });
-    }
-    slide.addText(ci.label, {
-      x: cx + 0.08, y: condY + 0.22, w: condW - 0.15, h: 0.15,
-      fontSize: 7, fontFace: FONT, bold: true,
-      color: configured ? C.white : C.mutedDark, margin: 0
-    });
-    const valText = configured ? (ci.value.length > 25 ? ci.value.substring(0, 23) + "\u2026" : ci.value) : "Not configured";
-    slide.addText(valText, {
-      x: cx + 0.08, y: condY + 0.37, w: condW - 0.15, h: 0.13,
-      fontSize: 6, fontFace: FONT_LIGHT,
-      color: configured ? C.muted : C.mutedDark,
-      margin: 0, shrinkText: true
-    });
-  });
-
-  // Main flow area
-  const flowY = 1.6;
-  const flowH = 3.55;
-
-  // Users card
-  const usersX = M;
-  const usersW = 2.0;
-  addFlowCard(slide, pres, usersX, flowY, usersW, flowH * 0.55, "USERS", () => {
-    const u = policy.users || {};
-    const lines = [];
-    if (u.includeUsers) lines.push({ label: "Include:", value: u.includeUsers, icon: "\u2705" });
-    else if (!u.includeGroups && !u.includeRoles) lines.push({ label: "Include:", value: "All users", icon: "\u2705" });
-    if (u.excludeUsers) lines.push({ label: "Exclude:", value: u.excludeUsers, icon: "\u{1F6AB}" });
-    if (u.includeGroups) lines.push({ label: "Groups:", value: u.includeGroups, icon: "\u2705" });
-    if (u.excludeGroups) lines.push({ label: "Groups (excl):", value: u.excludeGroups, icon: "\u{1F6AB}" });
-    if (u.includeRoles) lines.push({ label: "Roles:", value: u.includeRoles, icon: "\u2705" });
-    if (u.excludeRoles) lines.push({ label: "Roles (excl):", value: u.excludeRoles, icon: "\u{1F6AB}" });
-    return lines;
-  });
-
-  // Grant/Block label + arrow
-  const arrowX = usersX + usersW + 0.05;
-  const arrowLabelY = flowY + 0.1;
-  const actionLabel = blocking ? "Block access" : "Grant access";
-  const actionColor = blocking ? C.blockRed : C.grantGreen;
-
-  slide.addText(actionLabel, {
-    x: arrowX, y: arrowLabelY, w: 3.2, h: 0.28,
-    fontSize: 12, fontFace: FONT, bold: true, color: actionColor,
-    align: "center", margin: 0
-  });
-
-  slide.addShape(pres.shapes.LINE, {
-    x: arrowX + 0.1, y: arrowLabelY + 0.35, w: 3.0, h: 0,
-    line: { color: actionColor, width: 2 }
-  });
-  slide.addText("\u25B6", {
-    x: arrowX + 2.85, y: arrowLabelY + 0.23, w: 0.3, h: 0.25,
-    fontSize: 10, color: actionColor, align: "center", margin: 0
-  });
-
-  // Grant Controls panel
-  const grantX = arrowX + 0.15;
-  const grantY = arrowLabelY + 0.55;
-  const grantW = 2.9;
-  const grantH = flowH - 0.7;
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: grantX, y: grantY, w: grantW, h: grantH,
-    fill: { color: C.bgCard },
-    line: { color: C.border, width: 0.5 }
-  });
-
-  slide.addText("GRANT CONTROLS", {
-    x: grantX + 0.1, y: grantY + 0.05, w: grantW - 0.2, h: 0.18,
-    fontSize: 7, fontFace: FONT, bold: true, color: C.mutedDark,
-    charSpacing: 1.5, margin: 0
-  });
-
-  const g = policy.grantControls || {};
-  if (g.operator && g.operator !== "Not configured") {
-    slide.addText(g.operator, {
-      x: grantX + 0.1, y: grantY + 0.25, w: grantW - 0.2, h: 0.15,
-      fontSize: 7, fontFace: FONT, bold: true, color: C.muted, margin: 0
-    });
-  }
-
-  const activeGrants = getActiveGrantControls(policy);
-  const grantStartY = grantY + 0.45;
-  ALL_GRANT_CONTROLS.forEach((ctrl, i) => {
-    const active = activeGrants.has(ctrl);
-    const cy = grantStartY + i * 0.2;
-    const dot = active ? "\u25CF" : "\u25CB";
-    const textColor = active ? C.white : C.mutedDark;
-    const dotColor = active ? C.teal : C.mutedDark;
-
-    slide.addText(dot, {
-      x: grantX + 0.1, y: cy, w: 0.15, h: 0.17,
-      fontSize: 7, color: dotColor, margin: 0
+    slide.addText(`Modified: ${policy.lastModified}`, {
+      x: SLIDE.M,
+      y: metaY,
+      w: 3.6,
+      h: 0.2,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 9,
+      color: ctx.theme.palette.textMuted,
+      margin: 0,
     });
 
-    let ctrlLabel = ctrl;
-    if (ctrl === "Authentication strength" && g.authStrength) {
-      ctrlLabel = `Auth strength: ${g.authStrength}`;
-    }
-    slide.addText(ctrlLabel, {
-      x: grantX + 0.28, y: cy, w: grantW - 0.4, h: 0.17,
-      fontSize: 7.5, fontFace: active ? FONT : FONT_LIGHT, bold: active,
-      color: textColor, margin: 0, shrinkText: true
+    slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+      x: SLIDE.W - 2.3,
+      y: 0.38,
+      w: 1.88,
+      h: 0.36,
+      fill: { color: getToneColors(ctx.theme, stateTone).soft },
+      line: { color: getToneColors(ctx.theme, stateTone).strong, width: 0 },
+      rectRadius: ctx.theme.radii.pill,
     });
-  });
-
-  // Apps card
-  const appsX = grantX + grantW + 0.15;
-  const appsW = 2.0;
-  addFlowCard(slide, pres, appsX, flowY, appsW, flowH * 0.55, "APPS", () => {
-    const a = policy.applications || {};
-    const lines = [];
-    if (a.include) lines.push({ label: "Include:", value: a.include, icon: "\u2705" });
-    if (a.exclude) lines.push({ label: "Exclude:", value: a.exclude, icon: "\u{1F6AB}" });
-    if (a.userActions) lines.push({ label: "Actions:", value: a.userActions });
-    if (a.authContext) lines.push({ label: "Auth ctx:", value: a.authContext });
-    if (lines.length === 0) lines.push({ label: "", value: "All cloud apps", icon: "\u2705" });
-    return lines;
-  });
-
-  // Session Controls panel
-  const sessX = appsX;
-  const sessY = flowY + flowH * 0.55 + 0.08;
-  const sessW = appsW;
-  const sessH = flowH * 0.45 - 0.08;
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: sessX, y: sessY, w: sessW, h: sessH,
-    fill: { color: C.bgCard },
-    line: { color: C.border, width: 0.5 }
-  });
-
-  slide.addText("SESSION CONTROLS", {
-    x: sessX + 0.08, y: sessY + 0.05, w: sessW - 0.16, h: 0.18,
-    fontSize: 7, fontFace: FONT, bold: true, color: C.mutedDark,
-    charSpacing: 1, margin: 0
-  });
-
-  const sessData = policy.sessionControls || {};
-  const activeSign = !!sessData.signInFrequency;
-  const sessStartY = sessY + 0.28;
-
-  ALL_SESSION_CONTROLS.forEach((ctrl, i) => {
-    const cy = sessStartY + i * 0.17;
-    let active = false;
-    let detail = "";
-    if (ctrl === "Sign-in frequency" && activeSign) {
-      active = true;
-      detail = sessData.signInFrequency;
-    }
-
-    const dot = active ? "\u25CF" : "\u25CB";
-    slide.addText(dot, {
-      x: sessX + 0.08, y: cy, w: 0.12, h: 0.15,
-      fontSize: 6, color: active ? C.teal : C.mutedDark, margin: 0
+    slide.addText(stateLabel, {
+      x: SLIDE.W - 2.3,
+      y: 0.455,
+      w: 1.88,
+      h: 0.18,
+      fontFace: ctx.theme.typography.heading,
+      fontSize: 11,
+      bold: true,
+      color: getToneColors(ctx.theme, stateTone).strong,
+      align: "center",
+      margin: 0,
     });
 
-    const label = detail ? `${ctrl}: ${detail}` : ctrl;
-    slide.addText(label, {
-      x: sessX + 0.22, y: cy, w: sessW - 0.32, h: 0.15,
-      fontSize: 6, fontFace: active ? FONT : FONT_LIGHT, bold: active,
-      color: active ? C.white : C.mutedDark, margin: 0, shrinkText: true
-    });
-  });
+    addPolicyConditionRow(slide, ctx, policy, conditionsY);
 
-  // Footer
-  slide.addText(`Policy ${index + 1} of ${total}`, {
-    x: M, y: H - 0.3, w: 3, h: 0.2,
-    fontSize: 7, fontFace: FONT_LIGHT, color: C.mutedDark, margin: 0
-  });
-  slide.addText(genDate, {
-    x: W - M - 3, y: H - 0.3, w: 3, h: 0.2,
-    fontSize: 7, fontFace: FONT_LIGHT, color: C.mutedDark, align: "right", margin: 0
+    const leftX = SLIDE.M;
+    const leftY = conditionsY + 0.52;
+    const leftW = 2.05;
+    const leftH = 2.78;
+    const centerX = leftX + leftW + 0.18;
+    const centerW = 3.05;
+    const rightX = centerX + centerW + 0.14;
+    const rightW = SLIDE.W - SLIDE.M - rightX;
+
+    const activeGrantControls = new Set(collectActiveGrantControls(policy));
+    activeGrantControls.delete("Block access");
+    const grantControls = ALL_GRANT_CONTROLS
+      .filter((control) => control !== "Block access")
+      .concat(
+        Array.from(activeGrantControls).filter((control) => !ALL_GRANT_CONTROLS.includes(control) && control !== "Block access")
+      );
+
+    const activeSessionControls = new Set(collectActiveSessionControls(policy));
+    const sessionControls = ALL_SESSION_CONTROLS.concat(
+      Array.from(activeSessionControls).filter((control) => !ALL_SESSION_CONTROLS.includes(control))
+    );
+
+    const grantSubtitle = policy.grantControls.operator;
+    const sessionSubtitle = policy.sessionControls.signInFrequency
+      ? `Sign-in frequency: ${policy.sessionControls.signInFrequency}`
+      : null;
+    const grantRowH = 0.175;
+    const sessionRowH = 0.14;
+    const actionY = leftY + 0.08;
+    const grantY = leftY + 0.46;
+    const grantH = leftH - 0.46;
+    const appsH = 1.08;
+    const sessionH = leftH - appsH - 0.08;
+    const sessionY = leftY + appsH + 0.08;
+
+    addPolicyDetailPanel(slide, ctx, {
+      x: leftX,
+      y: leftY,
+      w: leftW,
+      h: leftH,
+      title: "Users",
+      tone: "neutral",
+    });
+    addPolicyDetailLines(slide, ctx, {
+      x: leftX,
+      y: leftY,
+      w: leftW,
+      h: leftH,
+      lines: buildPolicyUsersLines(policy),
+    });
+
+    slide.addText(policy.action === "Block" ? "Block access" : "Grant access", {
+      x: centerX,
+      y: actionY,
+      w: centerW,
+      h: 0.26,
+      fontFace: ctx.theme.typography.heading,
+      fontSize: 22,
+      bold: true,
+      color: actionColors.strong,
+      align: "center",
+      margin: 0,
+    });
+    slide.addShape(ctx.pres.shapes.LINE, {
+      x: centerX,
+      y: actionY + 0.27,
+      w: centerW - 0.12,
+      h: 0,
+      line: { color: actionColors.strong, width: 2 },
+    });
+    slide.addShape(ctx.pres.shapes.CHEVRON, {
+      x: centerX + centerW - 0.12,
+      y: actionY + 0.2,
+      w: 0.12,
+      h: 0.14,
+      fill: { color: actionColors.strong },
+      line: { color: actionColors.strong, width: 0 },
+    });
+    addControlChecklist(slide, ctx, {
+      x: centerX,
+      y: grantY,
+      w: centerW,
+      h: grantH,
+      title: "Grant Controls",
+      subtitle: grantSubtitle,
+      controls: grantControls,
+      activeSet: activeGrantControls,
+      tone: "neutral",
+      rowH: grantRowH,
+    });
+
+    addPolicyDetailPanel(slide, ctx, {
+      x: rightX,
+      y: leftY,
+      w: rightW,
+      h: appsH,
+      title: "Apps",
+      tone: "neutral",
+    });
+    addPolicyDetailLines(slide, ctx, {
+      x: rightX,
+      y: leftY,
+      w: rightW,
+      h: appsH,
+      lines: buildPolicyAppLines(policy),
+    });
+
+    addControlChecklist(slide, ctx, {
+      x: rightX,
+      y: sessionY,
+      w: rightW,
+      h: sessionH,
+      title: "Session Controls",
+      subtitle: sessionSubtitle,
+      controls: sessionControls,
+      activeSet: activeSessionControls,
+      tone: "neutral",
+      compact: true,
+      rowH: sessionRowH,
+    });
+
+    slide.addText(`Policy ${index + 1} of ${sorted.length} | ID ${policy.id}`, {
+      x: SLIDE.M,
+      y: SLIDE.H - 0.24,
+      w: 2.8,
+      h: 0.14,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 7,
+      color: ctx.theme.palette.textSubtle,
+      margin: 0,
+    });
   });
 }
 
-function addFlowCard(slide, pres, x, y, w, h, title, getLines) {
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x, y, w, h,
-    fill: { color: C.bgCard },
-    line: { color: C.border, width: 0.5 }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x, y, w: 0.03, h,
-    fill: { color: C.teal }
-  });
-
-  slide.addText(title, {
-    x: x + 0.1, y: y + 0.05, w: w - 0.2, h: 0.18,
-    fontSize: 7, fontFace: FONT, bold: true, color: C.mutedDark,
-    charSpacing: 1.5, margin: 0
-  });
-
-  const lines = getLines();
-  const textItems = [];
-  lines.forEach((line) => {
-    if (line.label) {
-      textItems.push({
-        text: (line.icon ? line.icon + " " : "") + line.label + " ",
-        options: { fontSize: 8, fontFace: FONT, bold: true, color: C.muted, breakLine: false }
-      });
-    }
-    textItems.push({
-      text: line.value,
-      options: { fontSize: 8, fontFace: FONT_LIGHT, color: C.white, breakLine: true }
-    });
-  });
-
-  slide.addText(textItems, {
-    x: x + 0.08, y: y + 0.27, w: w - 0.16, h: h - 0.35,
-    valign: "top", margin: 0, shrinkText: true, paraSpaceAfter: 3
-  });
+function createPresentationContext(pres, theme, analysis, policies, projectDir) {
+  const meta = analysis.meta || {};
+  return {
+    pres,
+    theme,
+    analysis,
+    policies,
+    projectDir,
+    slideNumber: 0,
+    tenantName: sanitizeText(pickFirst(meta.clientName, "Tenant"), 34),
+    reportDate: sanitizeText(pickFirst(meta.date, new Date().toISOString().slice(0, 10)), 28),
+    logoPath: resolveLogoPath(meta.logoPath, theme.metadata.logoPath, projectDir),
+  };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SECTION E: CLOSING
-// ═══════════════════════════════════════════════════════════════
+function buildDeck(ctx) {
+  addCoverSlide(ctx, ctx.analysis);
+  addAgendaSlide(ctx);
+  addScorecardSlide(ctx, ctx.analysis);
+  addExecutiveSummarySlide(ctx, ctx.analysis);
+  addTopPrioritiesSlides(ctx, ctx.analysis);
+  addRoadmapSlides(ctx, ctx.analysis);
 
-function addClosingSlide(pres, analysis) {
-  const slide = pres.addSlide();
-  slide.background = { color: C.bg };
-  addBgCircles(slide, pres);
-  const meta = analysis.meta;
-  const assess = analysis.assessment;
+  addEvidenceDividerSlide(ctx);
+  addPolicyLandscapeSlides(ctx, ctx.analysis);
+  addGeolocationSlides(ctx, ctx.analysis);
+  addMfaMatrixSlides(ctx, ctx.analysis);
+  addRiskPolicySlides(ctx, ctx.analysis);
+  addAuthStrengthSlides(ctx, ctx.analysis);
+  addPimCoverageSlides(ctx, ctx.analysis);
+  addReportOnlyPipelineSlides(ctx, ctx.analysis);
+  addMsManagedOverlapSlides(ctx, ctx.analysis);
+  addRecommendationsSlides(ctx, ctx.analysis);
 
-  slide.addText("Security Posture Assessment", {
-    x: M, y: 1.8, w: W - 2 * M, h: 0.8,
-    fontSize: 32, fontFace: FONT, bold: true, color: C.white,
-    align: "center", margin: 0
-  });
-
-  // Verdict badge
-  const verdictColor = resolveColor(assess.verdictColor);
-  const verdictDim = assess.verdictColor === "red" ? C.redDim : assess.verdictColor === "green" ? C.greenDim : C.amberDim;
-  slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-    x: (W - 5) / 2, y: 2.7, w: 5, h: 0.4,
-    fill: { color: verdictDim }, rectRadius: 0.05
-  });
-  slide.addText(assess.verdict, {
-    x: (W - 5) / 2, y: 2.7, w: 5, h: 0.4,
-    fontSize: 13, fontFace: FONT, bold: true, color: verdictColor,
-    align: "center", valign: "middle", margin: 0
-  });
-
-  slide.addText(assess.prioritySummary, {
-    x: M, y: 3.25, w: W - 2 * M, h: 0.3,
-    fontSize: 11, fontFace: FONT_LIGHT, color: C.muted,
-    align: "center", margin: 0
-  });
-
-  if (assess.criticalGap) {
-    slide.addText(`Critical gap: ${assess.criticalGap}`, {
-      x: M, y: 3.6, w: W - 2 * M, h: 0.3,
-      fontSize: 10, fontFace: FONT, bold: true, color: C.red,
-      align: "center", margin: 0
-    });
-  }
-
-  slide.addText(`${meta.policyCount} policies  \u2022  ${meta.enabledCount} enabled  \u2022  ${meta.reportOnlyCount} report-only  \u2022  ${meta.disabledCount} disabled`, {
-    x: M, y: 4.1, w: W - 2 * M, h: 0.3,
-    fontSize: 11, fontFace: FONT_LIGHT, color: C.mutedDark,
-    align: "center", margin: 0
-  });
-
-  slide.addShape(pres.shapes.LINE, {
-    x: 3, y: 4.55, w: 4, h: 0,
-    line: { color: C.border, width: 0.5 }
-  });
-
-  slide.addText(`Generated: ${meta.date}  |  Data: ${assess.dataSources}`, {
-    x: M, y: 4.65, w: W - 2 * M, h: 0.25,
-    fontSize: 8, fontFace: FONT_LIGHT, color: C.mutedDark,
-    align: "center", margin: 0
-  });
-
-  if (meta.nextReview) {
-    slide.addText(`Next Review: ${meta.nextReview}`, {
-      x: M, y: 4.9, w: W - 2 * M, h: 0.25,
-      fontSize: 8, fontFace: FONT_LIGHT, color: C.mutedDark,
-      align: "center", margin: 0
-    });
-  }
+  addAppendixDividerSlide(ctx, "Appendix", "Policy inventory and detail are separated from the executive narrative.");
+  addPolicyMatrixSlides(ctx);
+  addPolicyDetailSlides(ctx);
 }
-
-// ═══════════════════════════════════════════════════════════════
-// MAIN
-// ═══════════════════════════════════════════════════════════════
 
 async function main() {
-  // Resolve paths relative to this script's directory
-  const scriptDir = __dirname;
-  const projectDir = path.resolve(scriptDir, "..");
-
-  const analysisPath = path.resolve(projectDir, "analysis.json");
-  const policiesPath = path.resolve(projectDir, "policies.json");
-
-  if (!fs.existsSync(analysisPath)) {
-    console.error("Error: analysis.json not found at", analysisPath);
-    console.error("Run the CA Documenter skill first to generate analysis.json.");
-    process.exit(1);
-  }
-  if (!fs.existsSync(policiesPath)) {
-    console.error("Error: policies.json not found at", policiesPath);
-    process.exit(1);
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
+    return;
   }
 
-  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
-  const policies = JSON.parse(fs.readFileSync(policiesPath, "utf8"));
-  const meta = analysis.meta;
+  const projectDir = path.resolve(__dirname, "..");
+  const analysisPath = path.resolve(projectDir, options.analysis || "analysis.json");
+  const policiesPath = path.resolve(projectDir, options.policies || "policies.json");
+  const outputPath = path.resolve(projectDir, options.output || "CA_Security_Posture_Report.pptx");
 
+  const analysis = readJson(analysisPath, "analysis JSON");
+  const policiesRaw = readJson(policiesPath, "policies JSON");
+  const policies = normalizePolicies(policiesRaw);
+  if (!policies.length) throw new Error("No policies found in policies input.");
+
+  const theme = loadTheme(options.theme, projectDir);
   const pres = new pptxgen();
   pres.layout = "LAYOUT_16x9";
   pres.author = "CA Documenter";
-  pres.title = "Conditional Access Policies - Security Posture Report";
+  pres.title = sanitizeText(pickFirst(theme.metadata.title, "Conditional Access Security Posture Report"), 64);
+  pres.subject = "Conditional Access posture analysis";
+  pres.company = sanitizeText(pickFirst(analysis.meta && analysis.meta.clientName, "CA Documenter"), 48);
 
-  const enabled = policies.filter(p => p.state === "enabled");
-  const reportOnly = policies.filter(p => p.state === "report_only");
-  const disabled = policies.filter(p => p.state === "disabled");
+  const ctx = createPresentationContext(pres, theme, analysis, policies, projectDir);
+  buildDeck(ctx);
 
-  // Section A: Executive Overview
-  addTitleSlide(pres, analysis);
-  addExecutiveSummary(pres, analysis);
-  addPolicyLandscape(pres, analysis);
-
-  // Section B: Deep Analysis (conditional)
-  addGeolocationStrategy(pres, analysis);
-  addMfaMatrix(pres, analysis);
-  addRiskPolicies(pres, analysis);
-  addAuthStrengths(pres, analysis);
-  addPimCoverage(pres, analysis);
-  addReportOnlyPipeline(pres, analysis);
-  addMsManagedOverlap(pres, analysis);
-  addRecommendations(pres, analysis);
-
-  // Section C: Full Policy Matrix
-  addSummarySlides(pres, policies);
-
-  // Section D: Per-Policy Detail
-  addSectionDivider(pres, "Enabled Policies", enabled.length, C.green);
-  enabled.forEach((p, i) => addPolicySlide(pres, p, i, policies.length, meta.date));
-
-  addSectionDivider(pres, "Report-Only Policies", reportOnly.length, C.amber);
-  reportOnly.forEach((p, i) => addPolicySlide(pres, p, enabled.length + i, policies.length, meta.date));
-
-  addSectionDivider(pres, "Disabled Policies", disabled.length, C.red);
-  disabled.forEach((p, i) => addPolicySlide(pres, p, enabled.length + reportOnly.length + i, policies.length, meta.date));
-
-  // Section E: Closing
-  addClosingSlide(pres, analysis);
-
-  const outputPath = path.resolve(projectDir, "CA_Security_Posture_Report.pptx");
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   await pres.writeFile({ fileName: outputPath });
   console.log(`Generated ${outputPath}`);
+  console.log(`Slides generated: ${ctx.slideNumber}`);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
