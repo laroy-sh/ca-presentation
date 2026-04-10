@@ -1,4 +1,4 @@
-# CA Documenter Skill
+# CA Presentation Skill
 
 Generate an executive-first, client-facing PowerPoint report from Microsoft Entra Conditional Access policy data.
 

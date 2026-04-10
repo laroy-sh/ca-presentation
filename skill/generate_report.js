@@ -2356,10 +2356,10 @@ async function main() {
   const theme = loadTheme(options.theme, projectDir);
   const pres = new pptxgen();
   pres.layout = "LAYOUT_16x9";
-  pres.author = "CA Documenter";
+  pres.author = "CA Presentation";
   pres.title = sanitizeText(pickFirst(theme.metadata.title, "Conditional Access Security Posture Report"), 64);
   pres.subject = "Conditional Access posture analysis";
-  pres.company = sanitizeText(pickFirst(analysis.meta && analysis.meta.clientName, "CA Documenter"), 48);
+  pres.company = sanitizeText(pickFirst(analysis.meta && analysis.meta.clientName, "CA Presentation"), 48);
 
   const ctx = createPresentationContext(pres, theme, analysis, policies, projectDir);
   buildDeck(ctx);

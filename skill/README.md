@@ -1,6 +1,6 @@
-# CA Documenter Skill
+# CA Presentation Skill
 
-This folder contains the analysis contract and PowerPoint generator used by CA Documenter.
+This folder contains the analysis contract and PowerPoint generator used by CA Presentation.
 
 ## Files
 
