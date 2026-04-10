@@ -11,6 +11,8 @@ const SLIDE = {
   M: 0.42,
 };
 
+let _skipGuidSanitize = false;
+
 const CONTENT_LIMITS = {
   executiveCardsPerSlide: 4,
   roadmapItemsPerColumn: 5,
@@ -189,11 +191,19 @@ function cleanWhitespace(value) {
 }
 
 function humanizeIdentifier(value) {
-  return cleanWhitespace(
-    String(value || "")
-      .replace(/[_/]+/g, " ")
-      .replace(/\b[a-f0-9]{8}-[a-f0-9-]{27}\b/gi, "Directory object")
-  );
+  let text = String(value || "").replace(/[_]+/g, " ");
+  if (!_skipGuidSanitize) {
+    text = text.replace(/\b[a-f0-9]{8}-[a-f0-9-]{27}\b/gi, "Directory object");
+  }
+  return cleanWhitespace(text);
+}
+
+function detectRawGuids(policiesRaw) {
+  const guidRe = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i;
+  const json = JSON.stringify(policiesRaw);
+  const matches = json.match(new RegExp(guidRe.source, "gi")) || [];
+  // A few GUIDs may appear as well-known app IDs even in clean data; only flag as raw if many are found
+  return matches.length > 6;
 }
 
 function mapKnownLabel(value) {
@@ -1010,37 +1020,65 @@ function addCoverSlide(ctx, analysis) {
   }
 }
 
-function addAgendaSlide(ctx) {
-  const slide = createSlide(ctx, { section: "Executive Narrative" });
-  addSlideTitle(slide, ctx, "Agenda");
-  addSectionSubtitle(slide, ctx, "This report is structured for executive decisions first, evidence second, appendix last.");
+function buildAgendaItems(ctx) {
+  const a = ctx.analysis;
+  const counts = ctx.policyCounts;
+  const assessment = inferAssessment(a, ctx.policies);
 
-  const agendaItems = [
+  const strengthCount = toArray(a.executiveSummary && a.executiveSummary.strengths).length;
+  const concernCount = toArray(a.executiveSummary && a.executiveSummary.concerns).length;
+  const priorityCount = toArray(
+    a.executiveSummary && a.executiveSummary.topPriorities
+      ? a.executiveSummary.topPriorities
+      : a.recommendations
+  ).length;
+  const roCount = counts.reportOnly;
+
+  const evidenceSections = [];
+  if (a.policyLandscape) evidenceSections.push("Policy landscape");
+  if (a.geolocationStrategy && a.geolocationStrategy.available) evidenceSections.push("Geolocation strategy");
+  if (a.mfaMatrix) evidenceSections.push("MFA matrix");
+  if (a.riskPolicies) evidenceSections.push("Risk policies");
+  if (a.authStrengths && a.authStrengths.available) evidenceSections.push("Auth strengths");
+  if (a.pimCoverage && a.pimCoverage.available) evidenceSections.push("PIM coverage");
+  if (roCount > 0) evidenceSections.push("Report-only pipeline");
+
+  return [
     {
       title: "1. Posture Snapshot",
-      takeaway: "Current score, trend signal, and policy status distribution.",
-      evidence: ["Scorecard", "State mix", "Assessment summary"],
-      tone: "neutral",
+      takeaway: `${assessment.level} posture at ${assessment.score}/100. ${counts.enabled} enforced, ${roCount} report-only, ${counts.disabled} disabled.`,
+      evidence: [`${strengthCount} strengths identified`, `${concernCount} concerns flagged`, `Score: ${assessment.score}/100`],
+      tone: assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical",
     },
     {
       title: "2. Immediate Priorities",
-      takeaway: "Top actions that reduce risk quickly in the next quarter.",
-      evidence: ["Top priorities", "90-day roadmap"],
+      takeaway: `${priorityCount} priority actions identified for the next quarter.`,
+      evidence: roCount > 0
+        ? [`${priorityCount} priority items`, "90-day roadmap", `${roCount} report-only policies to convert`]
+        : [`${priorityCount} priority items`, "90-day roadmap"],
       tone: "critical",
     },
     {
       title: "3. Supporting Analysis",
-      takeaway: "Detailed evidence across MFA, risk, geography, and privileged access.",
-      evidence: ["Control evidence", "Policy overlap", "Recommendation detail"],
+      takeaway: `${evidenceSections.length} evidence sections covering ${counts.total} policies.`,
+      evidence: evidenceSections.slice(0, 5),
       tone: "caution",
     },
     {
       title: "4. Appendix",
-      takeaway: "Complete inventory and per-policy detail for audit and implementation.",
-      evidence: ["Policy matrix", "Policy-level breakdown"],
+      takeaway: `Full matrix and per-policy detail for all ${counts.total} policies.`,
+      evidence: ["Policy matrix", "Per-policy breakdown"],
       tone: "neutral",
     },
   ];
+}
+
+function addAgendaSlide(ctx) {
+  const slide = createSlide(ctx, { section: "Executive Narrative" });
+  addSlideTitle(slide, ctx, "Agenda");
+  addSectionSubtitle(slide, ctx, `${ctx.tenantName} Conditional Access review \u2014 ${ctx.policyCounts.total} policies assessed.`);
+
+  const agendaItems = buildAgendaItems(ctx);
 
   const cardW = (SLIDE.W - (SLIDE.M * 2) - 0.25) / 2;
   const cardH = 1.35;
@@ -1064,7 +1102,7 @@ function addScorecardSlide(ctx, analysis) {
   const slide = createSlide(ctx, { section: "Executive Narrative" });
   const assessment = inferAssessment(analysis, ctx.policies);
   addSlideTitle(slide, ctx, "Posture Scorecard");
-  addSectionSubtitle(slide, ctx, "Overall posture combines policy enforcement state and current recommendation backlog.");
+  addSectionSubtitle(slide, ctx, `${ctx.policyCounts.enabled}/${ctx.policyCounts.total} policies enforced \u2014 ${ctx.policyCounts.reportOnly} in report-only, ${ctx.policyCounts.disabled} disabled.`);
 
   const scoreTone = assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical";
   addStatBadge(slide, ctx, {
@@ -1112,13 +1150,13 @@ function addScorecardSlide(ctx, analysis) {
 }
 
 function addExecutiveSummarySlide(ctx, analysis) {
-  const slide = createSlide(ctx, { section: "Executive Narrative" });
-  addSlideTitle(slide, ctx, "Executive Summary");
-  addSectionSubtitle(slide, ctx, "Headline + takeaway + evidence format is used across all sections.");
-
   const summary = analysis.executiveSummary || {};
   const strengths = toArray(summary.strengths).slice(0, 6);
   const concerns = toArray(summary.concerns).slice(0, 6);
+
+  const slide = createSlide(ctx, { section: "Executive Narrative" });
+  addSlideTitle(slide, ctx, "Executive Summary");
+  addSectionSubtitle(slide, ctx, `${strengths.length} strengths and ${concerns.length} concerns identified across ${ctx.policyCounts.total} policies.`);
 
   addInsightCard(slide, ctx, {
     x: SLIDE.M,
@@ -1154,7 +1192,7 @@ function addTopPrioritiesSlides(ctx, analysis) {
     addSectionSubtitle(
       slide,
       ctx,
-      "These actions represent the highest leverage improvements for the next review cycle."
+      `${priorities.length} action${priorities.length === 1 ? "" : "s"} ranked by risk reduction impact for ${ctx.tenantName}.`
     );
 
     page.forEach((item, index) => {
@@ -1190,7 +1228,7 @@ function addRoadmapSlides(ctx, analysis) {
     addSectionSubtitle(
       slide,
       ctx,
-      "Near-term items are immediate risk reducers. Mid-term items sustain posture improvements."
+      `${roadmap.nearTerm.length} near-term and ${roadmap.midTerm.length} mid-term actions through ${pickFirst(analysis.meta && analysis.meta.nextReview, "next quarter")}.`
     );
 
     addInsightCard(slide, ctx, {
@@ -1219,47 +1257,7 @@ function addRoadmapSlides(ctx, analysis) {
 
 function addEvidenceDividerSlide(ctx) {
   const slide = createSlide(ctx, { section: "Supporting Analysis" });
-  slide.addText("Supporting Analysis", {
-    x: SLIDE.M,
-    y: 1.75,
-    w: SLIDE.W - (SLIDE.M * 2),
-    h: 0.6,
-    fontFace: ctx.theme.typography.title,
-    fontSize: 42,
-    bold: true,
-    color: ctx.theme.palette.textStrong,
-    align: "center",
-    margin: 0,
-  });
-  slide.addText("Control evidence and policy-level detail that supports the executive narrative.", {
-    x: SLIDE.M,
-    y: 2.38,
-    w: SLIDE.W - (SLIDE.M * 2),
-    h: 0.24,
-    fontFace: ctx.theme.typography.body,
-    fontSize: 12,
-    color: ctx.theme.palette.textMuted,
-    align: "center",
-    margin: 0,
-  });
-  slide.addShape(ctx.pres.shapes.LINE, {
-    x: 3.05,
-    y: 2.9,
-    w: 3.9,
-    h: 0,
-    line: { color: ctx.theme.palette.brandSoft, width: 1.5 },
-  });
-  slide.addText("Policy landscape | Geo strategy | MFA matrix | Risk controls | Auth strengths | PIM | Report-only | MS-managed overlap | Recommendations", {
-    x: 1.1,
-    y: 3.15,
-    w: 7.8,
-    h: 0.5,
-    fontFace: ctx.theme.typography.body,
-    fontSize: 10,
-    color: ctx.theme.palette.textSubtle,
-    align: "center",
-    margin: 0,
-  });
+  addAppendixDivider(slide, ctx, "Supporting Analysis", "Control evidence and policy-level detail that supports the executive narrative.");
 }
 
 function addPolicyLandscapeSlides(ctx, analysis) {
@@ -2351,6 +2349,7 @@ async function main() {
   const analysis = readJson(analysisPath, "analysis JSON");
   validateAnalysis(analysis);
   const policiesRaw = readJson(policiesPath, "policies JSON");
+  _skipGuidSanitize = !detectRawGuids(policiesRaw);
   const policies = normalizePolicies(policiesRaw);
   if (!policies.length) throw new Error("No policies found in policies input.");
 
