@@ -1,6 +1,6 @@
-# CA Documenter
+# CA Presentation
 
-Stop spending hours manually building Conditional Access review decks. CA Documenter reads your Microsoft Entra CA policy exports and generates a polished, executive-ready PowerPoint presentation — complete with posture scoring, prioritized recommendations, and per-policy detail breakdowns.
+Stop spending hours manually building Conditional Access review decks. CA Presentation reads your Microsoft Entra CA policy exports and generates a polished, executive-ready PowerPoint presentation — complete with posture scoring, prioritized recommendations, and per-policy detail breakdowns.
 
 ## The Problem
 
@@ -8,7 +8,7 @@ Reviewing Conditional Access policies means digging through JSON exports, cross-
 
 ## What This Does
 
-CA Documenter takes your raw policy export and a structured analysis, then generates a 30+ slide presentation that covers:
+CA Presentation takes your raw policy export and a structured analysis, then generates a 30+ slide presentation that covers:
 
 - **Posture scorecard** with enforcement state distribution
 - **Executive summary** with strengths, concerns, and top priorities
