@@ -56,17 +56,32 @@ npm run qa:render
 npm run qa:slides
 ```
 
-## Inputs
+## How It Works
 
-Required:
-- `policies.json` — Graph API envelope, raw array, or normalized policy list
+You need two files in your project root: `policies.json` and `analysis.json`.
 
-Optional enrichment (included in `analysis.json`):
-- Named locations
-- Authentication strengths
-- PIM role assignments
+### `policies.json` — your raw CA policy export
 
-The analysis structure is defined in [`skill/analysis-schema.md`](skill/analysis-schema.md).
+Export from the Microsoft Graph API:
+
+```
+GET https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies
+```
+
+Save the response (Graph envelope, bare array, or normalized list all work). You can also use the [Microsoft Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer) or `az rest` CLI.
+
+### `analysis.json` — the structured analysis
+
+This is where the intelligence lives. It contains the executive summary, posture scoring, recommendations, roadmap, and section-level analysis (MFA, geolocation, risk, PIM, etc.).
+
+You can produce it:
+- **With Claude Code** — this project includes a [skill](skill/SKILL.md) that reads your `policies.json` and generates `analysis.json` automatically following the [analysis schema](skill/analysis-schema.md)
+- **Manually** — write it by hand following the [analysis schema](skill/analysis-schema.md) and the [example](skill/examples/analysis-example.json)
+
+Optional enrichment inputs that improve the analysis:
+- Named locations JSON
+- Authentication strengths JSON
+- PIM role assignments JSON
 
 ## Output
 
