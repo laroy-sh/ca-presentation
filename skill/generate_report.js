@@ -64,11 +64,11 @@ function parseArgs(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--analysis") options.analysis = argv[i + 1];
-    if (arg === "--policies") options.policies = argv[i + 1];
-    if (arg === "--output") options.output = argv[i + 1];
-    if (arg === "--theme") options.theme = argv[i + 1];
-    if (arg === "--help" || arg === "-h") options.help = true;
+    if (arg === "--analysis") { options.analysis = argv[i + 1]; i += 1; }
+    else if (arg === "--policies") { options.policies = argv[i + 1]; i += 1; }
+    else if (arg === "--output") { options.output = argv[i + 1]; i += 1; }
+    else if (arg === "--theme") { options.theme = argv[i + 1]; i += 1; }
+    else if (arg === "--help" || arg === "-h") { options.help = true; }
   }
   return options;
 }
@@ -80,12 +80,22 @@ function printHelp() {
   console.log("  --analysis <path>   Path to analysis JSON (default: analysis.json)");
   console.log("  --policies <path>   Path to policies JSON (default: policies.json)");
   console.log("  --output <path>     Output PPTX path (default: CA_Security_Posture_Report.pptx)");
-  console.log("  --theme <path>      Optional theme JS/JSON file");
+  console.log("  --theme <path>      Optional theme JSON file");
   console.log("  --help              Show this help");
 }
 
 function deepClone(value) {
-  return JSON.parse(JSON.stringify(value));
+  return structuredClone(value);
+}
+
+function safePath(candidate, projectDir) {
+  const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(projectDir, candidate);
+  const normalizedResolved = path.resolve(resolved);
+  const normalizedProject = path.resolve(projectDir) + path.sep;
+  if (!normalizedResolved.startsWith(normalizedProject) && normalizedResolved !== path.resolve(projectDir)) {
+    throw new Error(`Path escapes project directory: ${candidate}`);
+  }
+  return normalizedResolved;
 }
 
 function isObject(value) {
@@ -108,18 +118,15 @@ function deepMerge(base, override) {
 
 function loadTheme(themePath, projectDir) {
   if (!themePath) return deepClone(defaultTheme);
-  const resolved = path.isAbsolute(themePath) ? themePath : path.resolve(projectDir, themePath);
+  const resolved = safePath(themePath, projectDir);
   if (!fs.existsSync(resolved)) {
     throw new Error(`Theme file not found: ${resolved}`);
   }
-  let customTheme;
-  if (resolved.endsWith(".json")) {
-    customTheme = JSON.parse(fs.readFileSync(resolved, "utf8"));
-  } else {
-    // eslint-disable-next-line global-require, import/no-dynamic-require
-    customTheme = require(resolved);
+  if (!resolved.endsWith(".json")) {
+    throw new Error(`Theme file must be JSON: ${resolved}`);
   }
-  return deepMerge(deepClone(defaultTheme), customTheme.default || customTheme);
+  const customTheme = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  return deepMerge(deepClone(defaultTheme), customTheme);
 }
 
 function ensureFileExists(filePath, friendlyName) {
@@ -128,10 +135,22 @@ function ensureFileExists(filePath, friendlyName) {
   }
 }
 
+function validateAnalysis(analysis) {
+  const required = ["meta", "executiveSummary", "recommendations"];
+  const missing = required.filter((key) => !analysis[key]);
+  if (missing.length) {
+    throw new Error(`Analysis JSON is missing required sections: ${missing.join(", ")}`);
+  }
+}
+
 function readJson(filePath, friendlyName) {
   ensureFileExists(filePath, friendlyName);
   const raw = fs.readFileSync(filePath, "utf8");
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Failed to parse ${friendlyName} at ${filePath}: ${err.message}`);
+  }
 }
 
 function clamp(value, min, max) {
@@ -418,7 +437,7 @@ function chunk(list, size) {
   for (let i = 0; i < list.length; i += size) {
     pages.push(list.slice(i, i + size));
   }
-  return pages.length ? pages : [[]];
+  return pages;
 }
 
 function inferAssessment(analysis, policies) {
@@ -504,7 +523,7 @@ function buildRoadmap(analysis) {
 function resolveLogoPath(logoPath, themeLogoPath, projectDir) {
   const candidate = pickFirst(logoPath, themeLogoPath);
   if (!candidate) return null;
-  const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(projectDir, candidate);
+  const resolved = safePath(candidate, projectDir);
   return fs.existsSync(resolved) ? resolved : null;
 }
 
@@ -941,12 +960,11 @@ function addCoverSlide(ctx, analysis) {
     margin: 0,
   });
 
-  const meta = analysis.meta || {};
   const badges = [
-    { label: "Policies", value: meta.policyCount || ctx.policies.length, tone: "neutral" },
-    { label: "Enabled", value: meta.enabledCount || ctx.policies.filter((item) => item.state === "enabled").length, tone: "positive" },
-    { label: "Report-only", value: meta.reportOnlyCount || ctx.policies.filter((item) => item.state === "report_only").length, tone: "caution" },
-    { label: "Disabled", value: meta.disabledCount || ctx.policies.filter((item) => item.state === "disabled").length, tone: "critical" },
+    { label: "Policies", value: ctx.policyCounts.total, tone: "neutral" },
+    { label: "Enabled", value: ctx.policyCounts.enabled, tone: "positive" },
+    { label: "Report-only", value: ctx.policyCounts.reportOnly, tone: "caution" },
+    { label: "Disabled", value: ctx.policyCounts.disabled, tone: "critical" },
   ];
   badges.forEach((badge, index) => {
     const colors = getToneColors(t, badge.tone);
@@ -1049,7 +1067,6 @@ function addAgendaSlide(ctx) {
 
 function addScorecardSlide(ctx, analysis) {
   const slide = createSlide(ctx, { section: "Executive Narrative" });
-  const meta = analysis.meta || {};
   const assessment = inferAssessment(analysis, ctx.policies);
   addSlideTitle(slide, ctx, "Posture Scorecard");
   addSectionSubtitle(slide, ctx, "Overall posture combines policy enforcement state and current recommendation backlog.");
@@ -1067,10 +1084,10 @@ function addScorecardSlide(ctx, analysis) {
   });
 
   const metrics = [
-    { label: "Total policies", value: meta.policyCount || ctx.policies.length, tone: "neutral" },
-    { label: "Enabled", value: meta.enabledCount || ctx.policies.filter((p) => p.state === "enabled").length, tone: "positive" },
-    { label: "Report-only", value: meta.reportOnlyCount || ctx.policies.filter((p) => p.state === "report_only").length, tone: "caution" },
-    { label: "Disabled", value: meta.disabledCount || ctx.policies.filter((p) => p.state === "disabled").length, tone: "critical" },
+    { label: "Total policies", value: ctx.policyCounts.total, tone: "neutral" },
+    { label: "Enabled", value: ctx.policyCounts.enabled, tone: "positive" },
+    { label: "Report-only", value: ctx.policyCounts.reportOnly, tone: "caution" },
+    { label: "Disabled", value: ctx.policyCounts.disabled, tone: "critical" },
   ];
 
   metrics.forEach((item, index) => {
@@ -1254,11 +1271,10 @@ function addPolicyLandscapeSlides(ctx, analysis) {
   const landscape = analysis.policyLandscape || {};
   const categories = toArray(landscape.categories);
   const categoryPages = chunk(categories, CONTENT_LIMITS.categoryCardsPerSlide);
-  const meta = analysis.meta || {};
-  const policyCount = meta.policyCount || Math.max(1, ctx.policies.length);
-  const enabledCount = meta.enabledCount || ctx.policies.filter((p) => p.state === "enabled").length;
-  const reportOnlyCount = meta.reportOnlyCount || ctx.policies.filter((p) => p.state === "report_only").length;
-  const disabledCount = meta.disabledCount || ctx.policies.filter((p) => p.state === "disabled").length;
+  const policyCount = Math.max(1, ctx.policyCounts.total);
+  const enabledCount = ctx.policyCounts.enabled;
+  const reportOnlyCount = ctx.policyCounts.reportOnly;
+  const disabledCount = ctx.policyCounts.disabled;
 
   categoryPages.forEach((page, pageIndex) => {
     const slide = createSlide(ctx, { section: "Supporting Analysis" });
@@ -1812,7 +1828,6 @@ function collectActiveGrantControls(policy) {
         if (normalized.includes("appprotectionpolicy")) return "App protection policy";
         if (normalized.includes("changepassword") || normalized.includes("passwordchange")) return "Change password";
         if (normalized.includes("termsofuse")) return "Terms of use";
-        if (normalized.includes("tokenprotection")) return "Token protection";
         return sanitizeText(value, 36);
       })
       .filter(Boolean)
@@ -2280,6 +2295,9 @@ function addPolicyDetailSlides(ctx) {
 
 function createPresentationContext(pres, theme, analysis, policies, projectDir) {
   const meta = analysis.meta || {};
+  const enabledCount = meta.enabledCount || policies.filter((p) => p.state === "enabled").length;
+  const reportOnlyCount = meta.reportOnlyCount || policies.filter((p) => p.state === "report_only").length;
+  const disabledCount = meta.disabledCount || policies.filter((p) => p.state === "disabled").length;
   return {
     pres,
     theme,
@@ -2290,6 +2308,12 @@ function createPresentationContext(pres, theme, analysis, policies, projectDir) 
     tenantName: sanitizeText(pickFirst(meta.clientName, "Tenant"), 34),
     reportDate: sanitizeText(pickFirst(meta.date, new Date().toISOString().slice(0, 10)), 28),
     logoPath: resolveLogoPath(meta.logoPath, theme.metadata.logoPath, projectDir),
+    policyCounts: {
+      total: meta.policyCount || policies.length,
+      enabled: enabledCount,
+      reportOnly: reportOnlyCount,
+      disabled: disabledCount,
+    },
   };
 }
 
@@ -2330,6 +2354,7 @@ async function main() {
   const outputPath = path.resolve(projectDir, options.output || "CA_Security_Posture_Report.pptx");
 
   const analysis = readJson(analysisPath, "analysis JSON");
+  validateAnalysis(analysis);
   const policiesRaw = readJson(policiesPath, "policies JSON");
   const policies = normalizePolicies(policiesRaw);
   if (!policies.length) throw new Error("No policies found in policies input.");

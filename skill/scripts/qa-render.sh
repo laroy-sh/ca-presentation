@@ -12,9 +12,9 @@ mkdir -p "$PREVIEW_DIR"
 
 echo "[qa:render] Generating sample PPTX..."
 node "$ROOT_DIR/skill/generate_report.js" \
-  --analysis "skill/examples/analysis-example.json" \
-  --policies "skill/examples/policies-example.json" \
-  --output "examples/sample/CA_Security_Posture_Report.sample.pptx"
+  --analysis "$ROOT_DIR/skill/examples/analysis-example.json" \
+  --policies "$ROOT_DIR/skill/examples/policies-example.json" \
+  --output "$OUT_DIR/CA_Security_Posture_Report.sample.pptx"
 
 if command -v soffice >/dev/null 2>&1; then
   echo "[qa:render] Converting PPTX to PDF..."
