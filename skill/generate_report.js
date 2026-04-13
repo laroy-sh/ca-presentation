@@ -718,7 +718,7 @@ function addCalloutBox(slide, ctx, options) {
       margin: 0,
     });
   }
-  slide.addText(sanitizeText(options.text, 190), {
+  slide.addText(sanitizeText(options.text, 320), {
     x: options.x + 0.12,
     y: options.y + (hasValue(options.title) ? 0.26 : 0.1),
     w: options.w - 0.24,
@@ -838,6 +838,60 @@ function addAppendixDivider(slide, ctx, title, subtitle) {
 function estimateTableHeight(rowCount, rowHeight, minHeight, maxHeight) {
   const computed = ((rowCount + 1) * rowHeight) + 0.14;
   return clamp(computed, minHeight, maxHeight);
+}
+
+// Conservative per-font average glyph width in inches. Overestimating (wider
+// glyphs, fewer chars per line) is safe: we trade whitespace for never-overlap.
+const FONT_CHAR_WIDTH_IN = { 8: 0.072, 9: 0.080, 10: 0.088, 11: 0.096, 12: 0.105 };
+function charWidthIn(fontSize) {
+  return FONT_CHAR_WIDTH_IN[fontSize] || 0.09;
+}
+function lineHeightIn(fontSize) {
+  // 1.3× font size (in inches) gives a cushion over the typographic ~1.15–1.2.
+  return (fontSize * 1.3) / 72;
+}
+function wrappedLines(text, widthIn, fontSize) {
+  const t = String(text == null ? "" : text);
+  if (!t.length) return 1;
+  const usable = Math.max(0.1, widthIn - 0.1);
+  const perLine = Math.max(1, Math.floor(usable / charWidthIn(fontSize)));
+  return Math.max(1, Math.ceil(t.length / perLine));
+}
+function measureCellHeight(text, widthIn, fontSize, minH) {
+  const lines = wrappedLines(text, widthIn, fontSize);
+  return Math.max(minH, (lines * lineHeightIn(fontSize)) + 0.08);
+}
+function measureRowHeight(cells, colW, fontSize, minRowH) {
+  return cells.reduce((max, cell, i) => {
+    const text = (cell && typeof cell === "object") ? (cell.text || "") : cell;
+    const h = measureCellHeight(text, colW[i] || 1, fontSize, minRowH);
+    return h > max ? h : max;
+  }, minRowH);
+}
+function measureTableHeight(spec) {
+  const {
+    headers, rows, colW,
+    headerFontSize = 8, bodyFontSize = 8,
+    headerMinH = 0.26, bodyMinH = 0.26,
+  } = spec;
+  const headerLabels = headers.map((h) => h.label || "");
+  const headerH = measureRowHeight(headerLabels, colW, headerFontSize, headerMinH);
+  const rowHs = rows.map((r) => measureRowHeight(r, colW, bodyFontSize, bodyMinH));
+  const uniformRowH = rowHs.reduce((max, h) => Math.max(max, h), Math.max(headerH, headerMinH, bodyMinH));
+  const totalH = uniformRowH * (rows.length + 1) + 0.14;
+  return { headerH, rowHs, uniformRowH, totalH };
+}
+function computeCalloutHeight(spec) {
+  const {
+    title, text, widthIn,
+    titleFontSize = 9, bodyFontSize = 10,
+    minH = 0.55, maxH = 2.0,
+  } = spec;
+  const inner = Math.max(0.5, widthIn - 0.24);
+  const bodyLines = wrappedLines(text || "", inner, bodyFontSize);
+  const titleBlock = title ? (0.07 + lineHeightIn(titleFontSize) + 0.04) : 0.1;
+  const textBlock = (bodyLines * lineHeightIn(bodyFontSize)) + 0.14;
+  return clamp(titleBlock + textBlock, minH, maxH);
 }
 
 function addTableWrapper(slide, ctx, options) {
@@ -1420,28 +1474,36 @@ function addMfaMatrixSlides(ctx, analysis) {
       { label: "Frequency", align: "center" },
       { label: "Conditions" },
     ];
+    const colW = [2.2, 1.7, 1.7, 1.0, 2.4];
     const formatted = buildTableRows(ctx, headers, pageRows);
-    const tableRowH = 0.28;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.95);
+    const measured = measureTableHeight({ headers, rows: pageRows, colW, bodyMinH: 0.28 });
+    const tableH = Math.min(measured.totalH, 3.2);
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
       y: startY,
       w: SLIDE.W - (SLIDE.M * 2),
       h: tableH,
       rows: formatted,
-      colW: [2.2, 1.7, 1.7, 1.0, 2.4],
-      rowH: tableRowH,
+      colW,
+      rowH: measured.uniformRowH,
     });
 
     if (pageIndex === 0 && mfa.callout) {
-      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      const calloutW = SLIDE.W - (SLIDE.M * 2);
+      const calloutY = startY + tableH + 0.14;
+      const titleText = sanitizeText(mfa.callout.title, 52);
+      const bodyText = sanitizeText(mfa.callout.text, 280);
+      const calloutH = computeCalloutHeight({
+        title: titleText, text: bodyText, widthIn: calloutW,
+        minH: 0.62, maxH: Math.max(0.62, (SLIDE.H - 0.35) - calloutY),
+      });
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
-        w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.72,
-        title: sanitizeText(mfa.callout.title, 52),
-        text: sanitizeText(mfa.callout.text, 160),
+        w: calloutW,
+        h: calloutH,
+        title: titleText,
+        text: bodyText,
         tone: "caution",
       });
     }
@@ -1569,9 +1631,10 @@ function addPimCoverageSlides(ctx, analysis) {
       { label: "Direct", align: "center" },
     ];
     const hasCallout = pageIndex === 0 && hasValue(pim.note);
-    const tableRowH = 0.24;
-    const maxTableH = hasCallout ? 2.6 : 3.2;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, maxTableH);
+    const colW = [2.2, 0.75, 0.75, 4.35, 1.0];
+    const measured = measureTableHeight({ headers, rows: pageRows, colW, bodyMinH: 0.26 });
+    const maxTableH = hasCallout ? 2.8 : 3.4;
+    const tableH = Math.min(measured.totalH, maxTableH);
 
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
@@ -1579,19 +1642,25 @@ function addPimCoverageSlides(ctx, analysis) {
       w: SLIDE.W - (SLIDE.M * 2),
       h: tableH,
       rows: buildTableRows(ctx, headers, pageRows),
-      colW: [2.2, 0.75, 0.75, 4.35, 1.0],
-      rowH: tableRowH,
+      colW,
+      rowH: measured.uniformRowH,
     });
 
     if (hasCallout) {
-      const calloutY = startY + tableH + 0.18;
+      const calloutW = SLIDE.W - (SLIDE.M * 2);
+      const calloutY = startY + tableH + 0.16;
+      const bodyText = sanitizeText(pim.note, 220);
+      const calloutH = computeCalloutHeight({
+        title: "Coverage note", text: bodyText, widthIn: calloutW,
+        minH: 0.6, maxH: Math.max(0.6, (SLIDE.H - 0.35) - calloutY),
+      });
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
-        w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.55,
+        w: calloutW,
+        h: calloutH,
         title: "Coverage note",
-        text: sanitizeText(pim.note, 140),
+        text: bodyText,
         tone: "neutral",
       });
     }
@@ -1628,27 +1697,35 @@ function addReportOnlyPipelineSlides(ctx, analysis) {
       { label: "Modified", align: "center" },
       { label: "Priority", align: "center" },
     ];
-    const tableRowH = 0.27;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, 2.9);
+    const colW = [2.45, 1.6, 2.2, 1.2, 0.9];
+    const measured = measureTableHeight({ headers, rows: pageRows, colW, bodyMinH: 0.27 });
+    const tableH = Math.min(measured.totalH, 3.1);
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
       y: startY,
       w: SLIDE.W - (SLIDE.M * 2),
       h: tableH,
       rows: buildTableRows(ctx, headers, pageRows),
-      colW: [2.45, 1.6, 2.2, 1.2, 0.9],
-      rowH: tableRowH,
+      colW,
+      rowH: measured.uniformRowH,
     });
 
     if (pageIndex === 0 && pipeline.callout) {
-      const calloutY = Math.min(startY + tableH + 0.14, 4.28);
+      const calloutW = SLIDE.W - (SLIDE.M * 2);
+      const calloutY = startY + tableH + 0.14;
+      const titleText = sanitizeText(pipeline.callout.title, 64);
+      const bodyText = sanitizeText(pipeline.callout.text, 260);
+      const calloutH = computeCalloutHeight({
+        title: titleText, text: bodyText, widthIn: calloutW,
+        minH: 0.62, maxH: Math.max(0.62, (SLIDE.H - 0.35) - calloutY),
+      });
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
-        w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.72,
-        title: sanitizeText(pipeline.callout.title, 64),
-        text: sanitizeText(pipeline.callout.text, 170),
+        w: calloutW,
+        h: calloutH,
+        title: titleText,
+        text: bodyText,
         tone: "critical",
       });
     }
@@ -1683,28 +1760,37 @@ function addMsManagedOverlapSlides(ctx, analysis) {
       { label: "Custom equivalent" },
       { label: "Overlap", align: "center" },
     ];
-    const tableRowH = 0.25;
-    const maxTableH = (pageIndex === 0 && overlap.callout) ? 2.4 : 3.2;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 1.2, maxTableH);
+    const colW = [2.55, 2.7, 2.75, 1.1];
+    const hasCallout = pageIndex === 0 && overlap.callout;
+    const measured = measureTableHeight({ headers, rows: pageRows, colW, bodyMinH: 0.27 });
+    const maxTableH = hasCallout ? 2.8 : 3.4;
+    const tableH = Math.min(measured.totalH, maxTableH);
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
       y: startY,
       w: SLIDE.W - (SLIDE.M * 2),
       h: tableH,
       rows: buildTableRows(ctx, headers, pageRows),
-      colW: [2.55, 2.7, 2.75, 1.1],
-      rowH: tableRowH,
+      colW,
+      rowH: measured.uniformRowH,
     });
 
-    if (pageIndex === 0 && overlap.callout) {
-      const calloutY = startY + tableH + 0.18;
+    if (hasCallout) {
+      const calloutW = SLIDE.W - (SLIDE.M * 2);
+      const calloutY = startY + tableH + 0.16;
+      const titleText = sanitizeText(overlap.callout.title, 64);
+      const bodyText = sanitizeText(overlap.callout.text, 260);
+      const calloutH = computeCalloutHeight({
+        title: titleText, text: bodyText, widthIn: calloutW,
+        minH: 0.62, maxH: Math.max(0.62, (SLIDE.H - 0.35) - calloutY),
+      });
       addCalloutBox(slide, ctx, {
         x: SLIDE.M,
         y: calloutY,
-        w: SLIDE.W - (SLIDE.M * 2),
-        h: 0.65,
-        title: sanitizeText(overlap.callout.title, 64),
-        text: sanitizeText(overlap.callout.text, 170),
+        w: calloutW,
+        h: calloutH,
+        title: titleText,
+        text: bodyText,
         tone: "critical",
       });
     }
@@ -1795,16 +1881,17 @@ function addPolicyMatrixSlides(ctx) {
       { label: "Scope summary" },
       { label: "Modified", align: "center" },
     ];
-    const tableRowH = 0.24;
-    const tableH = estimateTableHeight(pageRows.length, tableRowH, 2.2, 3.5);
+    const colW = [0.35, 2.7, 0.95, 0.75, 3.3, 1.1];
+    const measured = measureTableHeight({ headers, rows: pageRows, colW, bodyMinH: 0.26 });
+    const tableH = Math.min(measured.totalH, 3.7);
     addTableWrapper(slide, ctx, {
       x: SLIDE.M,
       y: startY,
       w: SLIDE.W - (SLIDE.M * 2),
       h: tableH,
       rows: buildTableRows(ctx, headers, pageRows),
-      colW: [0.35, 2.7, 0.95, 0.75, 3.3, 1.1],
-      rowH: tableRowH,
+      colW,
+      rowH: measured.uniformRowH,
     });
   });
 }
