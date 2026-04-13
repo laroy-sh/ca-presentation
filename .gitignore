@@ -2,3 +2,6 @@ node_modules/
 analysis.json
 policies.json
 CA_Security_Posture_Report.pptx
+CA_Security_Posture_Report_*.pptx
+examples/CA_Security_Posture_Report_*.pptx
+!examples/sample/CA_Security_Posture_Report.sample.pptx
