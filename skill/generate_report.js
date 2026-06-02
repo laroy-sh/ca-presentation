@@ -624,7 +624,7 @@ function addSlideTitle(slide, ctx, text, y = 0.34) {
     w: SLIDE.W - (SLIDE.M * 2),
     h: 0.35,
     fontFace: ctx.theme.typography.title,
-    fontSize: 24,
+    fontSize: 26,
     bold: true,
     color: ctx.theme.palette.textStrong,
     margin: 0,
@@ -634,7 +634,7 @@ function addSlideTitle(slide, ctx, text, y = 0.34) {
 function addSectionSubtitle(slide, ctx, text, y = 0.73) {
   slide.addText(sanitizeText(text, 128), {
     x: SLIDE.M,
-    y,
+    y: y + 0.02,
     w: SLIDE.W - (SLIDE.M * 2),
     h: 0.24,
     fontFace: ctx.theme.typography.body,
@@ -742,7 +742,7 @@ function addInsightCard(slide, ctx, options) {
     w: options.w,
     h: options.h,
     fill: { color: ctx.theme.palette.surface, transparency: glass.transparency },
-    line: { color: ctx.theme.palette.border, width: 0 },
+    line: { color: ctx.theme.palette.border, width: 0.5 },
     shadow: glass.shadow,
     rectRadius: ctx.theme.radii.md,
   });
@@ -757,12 +757,12 @@ function addInsightCard(slide, ctx, options) {
   });
 
   slide.addText(sanitizeText(options.title, 72), {
-    x: options.x + 0.12,
-    y: options.y + 0.07,
-    w: options.w - 0.24,
-    h: 0.22,
-    fontFace: ctx.theme.typography.body,
-    fontSize: 10,
+    x: options.x + 0.14,
+    y: options.y + 0.08,
+    w: options.w - 0.28,
+    h: 0.24,
+    fontFace: ctx.theme.typography.heading,
+    fontSize: 11,
     bold: true,
     color: colors.strong,
     margin: 0,
@@ -770,13 +770,13 @@ function addInsightCard(slide, ctx, options) {
 
   if (hasValue(options.takeaway)) {
     slide.addText(sanitizeText(options.takeaway, 120), {
-      x: options.x + 0.12,
-      y: options.y + 0.31,
-      w: options.w - 0.24,
-      h: 0.24,
+      x: options.x + 0.14,
+      y: options.y + 0.34,
+      w: options.w - 0.28,
+      h: 0.26,
       fontFace: ctx.theme.typography.body,
-      fontSize: 9,
-      color: ctx.theme.palette.textBody,
+      fontSize: 9.5,
+      color: ctx.theme.palette.textStrong,
       margin: 0,
       shrinkText: true,
     });
@@ -785,15 +785,16 @@ function addInsightCard(slide, ctx, options) {
   if (toArray(options.evidence).length) {
     const lines = toArray(options.evidence).slice(0, 5).map((line) => sanitizeText(line, 82));
     slide.addText(lines.map((line) => ({ text: `- ${line}`, options: { breakLine: true } })), {
-      x: options.x + 0.12,
-      y: options.y + (hasValue(options.takeaway) ? 0.57 : 0.33),
-      w: options.w - 0.24,
-      h: options.h - (hasValue(options.takeaway) ? 0.65 : 0.41),
+      x: options.x + 0.14,
+      y: options.y + (hasValue(options.takeaway) ? 0.62 : 0.36),
+      w: options.w - 0.28,
+      h: options.h - (hasValue(options.takeaway) ? 0.70 : 0.44),
       fontFace: ctx.theme.typography.body,
-      fontSize: 8,
+      fontSize: 8.5,
       color: ctx.theme.palette.textMuted,
       margin: 0,
       shrinkText: true,
+      lineSpacing: 12,
     });
   }
 }
@@ -922,12 +923,13 @@ function buildTableRows(ctx, headers, rows) {
   const headerRow = headers.map((header) => ({
     text: sanitizeText(header.label, 36),
     options: {
-      fill: { color: ctx.theme.palette.brand },
+      fill: { color: ctx.theme.palette.surfaceStrong || ctx.theme.palette.brand },
       color: "FFFFFF",
       bold: true,
-      fontFace: ctx.theme.typography.body,
-      fontSize: 8,
+      fontFace: ctx.theme.typography.heading,
+      fontSize: 9,
       align: header.align || "left",
+      margin: 0.04,
     },
   }));
 
@@ -941,8 +943,10 @@ function buildTableRows(ctx, headers, rows) {
           fill: { color: fillColor },
           color: ctx.theme.palette.textBody,
           fontFace: ctx.theme.typography.body,
-          fontSize: 7.5,
+          fontSize: 8,
           align,
+          valign: "middle",
+          margin: 0.04,
         },
       };
     });
@@ -1159,17 +1163,90 @@ function addScorecardSlide(ctx, analysis) {
   addSectionSubtitle(slide, ctx, `${ctx.policyCounts.enabled}/${ctx.policyCounts.total} policies enforced \u2014 ${ctx.policyCounts.reportOnly} in report-only, ${ctx.policyCounts.disabled} disabled.`);
 
   const scoreTone = assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical";
-  addStatBadge(slide, ctx, {
+  const scoreColors = getToneColors(ctx.theme, scoreTone);
+  const glass = ctx.theme.effects && ctx.theme.effects.glass ? ctx.theme.effects.glass : { transparency: 0, shadow: null };
+
+  // Main Wide Score Card
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
     x: SLIDE.M,
     y: 1.2,
-    w: 2.4,
+    w: 6.0,
     h: 2.0,
-    label: `${assessment.level} posture`,
-    value: assessment.score,
-    valueSize: 44,
-    tone: scoreTone,
+    fill: { color: ctx.theme.palette.surface, transparency: glass.transparency },
+    line: { color: scoreColors.strong, width: 1.25 }, // Highlight border
+    shadow: glass.shadow,
+    rectRadius: ctx.theme.radii.md,
   });
 
+  slide.addText("OVERALL POSTURE SCORE", {
+    x: SLIDE.M + 0.3,
+    y: 1.35,
+    w: 5.4,
+    h: 0.2,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 10,
+    bold: true,
+    color: ctx.theme.palette.textMuted,
+    margin: 0
+  });
+
+  slide.addText(String(assessment.score), {
+    x: SLIDE.M + 0.26,
+    y: 1.55,
+    w: 1.8,
+    h: 0.7,
+    fontFace: ctx.theme.typography.heading,
+    fontSize: 68,
+    bold: true,
+    color: scoreColors.strong,
+    margin: 0,
+    align: "left"
+  });
+
+  slide.addText("/ 100", {
+    x: SLIDE.M + 1.8,
+    y: 1.9,
+    w: 1.0,
+    h: 0.3,
+    fontFace: ctx.theme.typography.body,
+    fontSize: 16,
+    color: ctx.theme.palette.textSubtle,
+    margin: 0,
+    align: "left"
+  });
+
+  slide.addText(sanitizeText(assessment.level, 32).toUpperCase(), {
+    x: SLIDE.M + 2.5,
+    y: 1.85,
+    w: 3.2,
+    h: 0.3,
+    fontFace: ctx.theme.typography.heading,
+    fontSize: 20,
+    bold: true,
+    color: ctx.theme.palette.textStrong,
+    margin: 0,
+    align: "right"
+  });
+
+  // Sleek Progress Bar
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: SLIDE.M + 0.3,
+    y: 2.6,
+    w: 5.4,
+    h: 0.12,
+    fill: { color: ctx.theme.palette.surfaceAlt },
+    rectRadius: ctx.theme.radii.sm,
+  });
+  slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+    x: SLIDE.M + 0.3,
+    y: 2.6,
+    w: 5.4 * (assessment.score / 100),
+    h: 0.12,
+    fill: { color: scoreColors.strong },
+    rectRadius: ctx.theme.radii.sm,
+  });
+
+  // Side metric cards (stacked cleanly)
   const metrics = [
     { label: "Total policies", value: ctx.policyCounts.total, tone: "neutral" },
     { label: "Enabled", value: ctx.policyCounts.enabled, tone: "positive" },
@@ -1178,25 +1255,59 @@ function addScorecardSlide(ctx, analysis) {
   ];
 
   metrics.forEach((item, index) => {
-    const col = index % 2;
-    const row = Math.floor(index / 2);
-    addStatBadge(slide, ctx, {
-      x: 3.1 + (col * 3.25),
-      y: 1.2 + (row * 1.05),
-      w: 3.0,
-      h: 0.9,
-      label: item.label,
-      value: item.value,
-      valueSize: 26,
-      tone: item.tone,
+    const toneColors = getToneColors(ctx.theme, item.tone);
+    const cardY = 1.2 + (index * 0.49);
+    slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+      x: SLIDE.M + 6.3,
+      y: cardY,
+      w: 2.8,
+      h: 0.42,
+      fill: { color: ctx.theme.palette.surface, transparency: glass.transparency },
+      line: { color: ctx.theme.palette.border, width: 0.25 },
+      shadow: glass.shadow,
+      rectRadius: ctx.theme.radii.md,
+    });
+    // Thick left border accent for the metric cards
+    slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
+      x: SLIDE.M + 6.3,
+      y: cardY,
+      w: 0.08,
+      h: 0.42,
+      fill: { color: toneColors.strong },
+      rectRadius: ctx.theme.radii.md,
+    });
+    slide.addText(item.label, {
+      x: SLIDE.M + 6.45,
+      y: cardY + 0.01,
+      w: 1.5,
+      h: 0.4,
+      fontFace: ctx.theme.typography.body,
+      fontSize: 10,
+      color: ctx.theme.palette.textBody,
+      margin: 0,
+      align: "left",
+      valign: "middle"
+    });
+    slide.addText(String(item.value), {
+      x: SLIDE.M + 8.1,
+      y: cardY + 0.01,
+      w: 0.85,
+      h: 0.4,
+      fontFace: ctx.theme.typography.heading,
+      fontSize: 16,
+      bold: true,
+      color: toneColors.strong,
+      margin: 0,
+      align: "right",
+      valign: "middle"
     });
   });
 
   addCalloutBox(slide, ctx, {
     x: SLIDE.M,
-    y: 3.45,
+    y: 3.5,
     w: SLIDE.W - (SLIDE.M * 2),
-    h: 1.05,
+    h: 1.0,
     title: "Assessment",
     text: `${assessment.verdict}. ${assessment.prioritySummary}${assessment.criticalGap ? ` Critical gap: ${assessment.criticalGap}.` : ""}`,
     tone: scoreTone,
@@ -1337,46 +1448,37 @@ function addPolicyLandscapeSlides(ctx, analysis) {
       takeaway
     );
 
-    const barData = [
-      { label: "Enabled", value: enabledCount, tone: "positive" },
-      { label: "Report-only", value: reportOnlyCount, tone: "caution" },
-      { label: "Disabled", value: disabledCount, tone: "critical" },
+    const chartData = [
+      { name: "Enabled", labels: ["Policies"], values: [enabledCount] },
+      { name: "Report-only", labels: ["Policies"], values: [reportOnlyCount] },
+      { name: "Disabled", labels: ["Policies"], values: [disabledCount] },
     ];
 
-    barData.forEach((item, index) => {
-      const y = startY + (index * 0.32);
-      const width = clamp((item.value / Math.max(1, policyCount)) * 4.5, 0.3, 4.5);
-      const tone = getToneColors(ctx.theme, item.tone);
-      slide.addText(item.label, {
-        x: SLIDE.M,
-        y,
-        w: 1.3,
-        h: 0.2,
-        fontFace: ctx.theme.typography.body,
-        fontSize: 9,
-        color: ctx.theme.palette.textMuted,
-        margin: 0,
-      });
-      slide.addShape(ctx.pres.shapes.ROUNDED_RECTANGLE, {
-        x: SLIDE.M + 1.35,
-        y: y + 0.02,
-        w: width,
-        h: 0.17,
-        fill: { color: tone.strong },
-        line: { color: tone.strong, width: 0.1 },
-        rectRadius: ctx.theme.radii.sm,
-      });
-      slide.addText(String(item.value), {
-        x: SLIDE.M + 1.35 + width + 0.08,
-        y,
-        w: 0.8,
-        h: 0.2,
-        fontFace: ctx.theme.typography.body,
-        fontSize: 9,
-        bold: true,
-        color: tone.strong,
-        margin: 0,
-      });
+    slide.addChart(ctx.pres.charts.BAR, chartData, {
+      x: SLIDE.M,
+      y: startY,
+      w: SLIDE.W - (SLIDE.M * 2),
+      h: 0.85,
+      barDir: "bar",
+      barGrouping: "stacked",
+      showTitle: false,
+      showLegend: true,
+      legendPos: "b",
+      legendColor: ctx.theme.palette.textMuted,
+      legendFontSize: 9,
+      legendFontFace: ctx.theme.typography.body,
+      showValue: true,
+      dataLabelColor: "FFFFFF",
+      dataLabelFontFace: ctx.theme.typography.body,
+      dataLabelFontSize: 9,
+      catAxisHidden: true,
+      valAxisHidden: true,
+      border: { width: 0 },
+      chartColors: [
+        getToneColors(ctx.theme, "positive").strong,
+        getToneColors(ctx.theme, "caution").strong,
+        getToneColors(ctx.theme, "critical").strong
+      ]
     });
 
     const cardY = startY + 1.05;
@@ -2150,7 +2252,7 @@ function addControlChecklist(slide, ctx, options) {
 
   controls.forEach((control, index) => {
     const active = options.activeSet.has(control);
-    slide.addText(`[${active ? "x" : " "}]`, {
+    slide.addText(active ? "\u25CF" : "\u25CB", {
       x: options.x + 0.1,
       y: rowStart + (index * rowH),
       w: 0.2,
