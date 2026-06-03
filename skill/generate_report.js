@@ -12,6 +12,7 @@ const SLIDE = {
 };
 
 let _skipGuidSanitize = false;
+let _derivedScoreWarned = false;
 
 const CONTENT_LIMITS = {
   executiveCardsPerSlide: 4,
@@ -70,6 +71,7 @@ function parseArgs(argv) {
     else if (arg === "--policies") { options.policies = argv[i + 1]; i += 1; }
     else if (arg === "--output") { options.output = argv[i + 1]; i += 1; }
     else if (arg === "--theme") { options.theme = argv[i + 1]; i += 1; }
+    else if (arg === "--show-raw-ids") { options.showRawIds = true; }
     else if (arg === "--help" || arg === "-h") { options.help = true; }
   }
   return options;
@@ -83,6 +85,7 @@ function printHelp() {
   console.log("  --policies <path>   Path to policies JSON (default: policies.json)");
   console.log("  --output <path>     Output PPTX path (default: CA_Security_Posture_Report.pptx)");
   console.log("  --theme <path>      Optional theme JSON file");
+  console.log("  --show-raw-ids      Render raw directory object GUIDs instead of redacting them (default: redact)");
   console.log("  --help              Show this help");
 }
 
@@ -196,14 +199,6 @@ function humanizeIdentifier(value) {
     text = text.replace(/\b[a-f0-9]{8}-[a-f0-9-]{27}\b/gi, "Directory object");
   }
   return cleanWhitespace(text);
-}
-
-function detectRawGuids(policiesRaw) {
-  const guidRe = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i;
-  const json = JSON.stringify(policiesRaw);
-  const matches = json.match(new RegExp(guidRe.source, "gi")) || [];
-  // A few GUIDs may appear as well-known app IDs even in clean data; only flag as raw if many are found
-  return matches.length > 6;
 }
 
 function mapKnownLabel(value) {
@@ -455,7 +450,12 @@ function inferAssessment(analysis, policies) {
   const enabled = policies.filter((policy) => policy.state === "enabled").length;
   const reportOnly = policies.filter((policy) => policy.state === "report_only").length;
   const scoreDerived = clamp(Math.round((((enabled * 1) + (reportOnly * 0.5)) / Math.max(1, policies.length)) * 100), 0, 100);
-  const score = Number.isFinite(assessment.score) ? clamp(Math.round(assessment.score), 0, 100) : scoreDerived;
+  const scoreProvided = Number.isFinite(assessment.score);
+  const score = scoreProvided ? clamp(Math.round(assessment.score), 0, 100) : scoreDerived;
+  if (!scoreProvided && !_derivedScoreWarned) {
+    _derivedScoreWarned = true;
+    console.warn("[ca-presentation] No assessment.score was supplied, so the deck shows enforcement coverage (percent of policies enabled), which is not a security-quality score.");
+  }
   const level = hasValue(assessment.level)
     ? sanitizeText(assessment.level, 32)
     : score >= 85
@@ -468,6 +468,7 @@ function inferAssessment(analysis, policies) {
   return {
     score,
     level,
+    derived: !scoreProvided,
     verdict: sanitizeText(pickFirst(assessment.verdict, "Posture review complete"), 72),
     prioritySummary: sanitizeText(
       pickFirst(assessment.prioritySummary, "Priorities are grouped in the next section."),
@@ -906,13 +907,23 @@ function addTableWrapper(slide, ctx, options) {
     rectRadius: ctx.theme.radii.sm,
   });
 
+  // Fit invariant: rowH * rowCount must stay within the inner box height, or the
+  // table overflows its box (autoPage is off) and collides with the callout placed
+  // at startY + tableH. options.rows already includes the header row, so rowCount
+  // covers header plus body.
+  const rowCount = options.rows.length;
+  const innerH = options.h - 0.08;
+  const fittedRowH = rowCount > 0
+    ? Math.min(options.rowH || 0.27, innerH / rowCount)
+    : (options.rowH || 0.27);
+
   slide.addTable(options.rows, {
     x: options.x + 0.04,
     y: options.y + 0.04,
     w: options.w - 0.08,
     h: options.h - 0.08,
     colW: options.colW,
-    rowH: options.rowH || 0.27,
+    rowH: fittedRowH,
     border: { pt: 0.3, color: ctx.theme.palette.border },
     autoPage: false,
     valign: "middle",
@@ -1104,7 +1115,7 @@ function buildAgendaItems(ctx) {
   return [
     {
       title: "1. Posture Snapshot",
-      takeaway: `${assessment.level} posture at ${assessment.score}/100. ${counts.enabled} enforced, ${roCount} report-only, ${counts.disabled} disabled.`,
+      takeaway: `${assessment.level} ${assessment.derived ? `enforcement coverage at ${assessment.score}%` : `posture at ${assessment.score}/100`}. ${counts.enabled} enforced, ${roCount} report-only, ${counts.disabled} disabled.`,
       evidence: [`${strengthCount} strengths identified`, `${concernCount} concerns flagged`, `Score: ${assessment.score}/100`],
       tone: assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical",
     },
@@ -1178,7 +1189,7 @@ function addScorecardSlide(ctx, analysis) {
     rectRadius: ctx.theme.radii.md,
   });
 
-  slide.addText("OVERALL POSTURE SCORE", {
+  slide.addText(assessment.derived ? "ENFORCEMENT COVERAGE" : "OVERALL POSTURE SCORE", {
     x: SLIDE.M + 0.3,
     y: 1.35,
     w: 5.4,
@@ -2541,7 +2552,7 @@ async function main() {
   const analysis = readJson(analysisPath, "analysis JSON");
   validateAnalysis(analysis);
   const policiesRaw = readJson(policiesPath, "policies JSON");
-  _skipGuidSanitize = !detectRawGuids(policiesRaw);
+  _skipGuidSanitize = Boolean(options.showRawIds);
   const policies = normalizePolicies(policiesRaw);
   if (!policies.length) throw new Error("No policies found in policies input.");
 
