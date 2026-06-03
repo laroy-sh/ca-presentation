@@ -1114,9 +1114,9 @@ function buildAgendaItems(ctx) {
 
   return [
     {
-      title: "1. Posture Snapshot",
+      title: assessment.derived ? "1. Enforcement Snapshot" : "1. Posture Snapshot",
       takeaway: `${assessment.level} ${assessment.derived ? `enforcement coverage at ${assessment.score}%` : `posture at ${assessment.score}/100`}. ${counts.enabled} enforced, ${roCount} report-only, ${counts.disabled} disabled.`,
-      evidence: [`${strengthCount} strengths identified`, `${concernCount} concerns flagged`, `Score: ${assessment.score}/100`],
+      evidence: [`${strengthCount} strengths identified`, `${concernCount} concerns flagged`, assessment.derived ? `Coverage: ${assessment.score}%` : `Score: ${assessment.score}/100`],
       tone: assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical",
     },
     {
@@ -1170,7 +1170,7 @@ function addAgendaSlide(ctx) {
 function addScorecardSlide(ctx, analysis) {
   const slide = createSlide(ctx, { section: "Executive Narrative" });
   const assessment = inferAssessment(analysis, ctx.policies);
-  addSlideTitle(slide, ctx, "Posture Scorecard");
+  addSlideTitle(slide, ctx, assessment.derived ? "Enforcement Coverage Scorecard" : "Posture Scorecard");
   addSectionSubtitle(slide, ctx, `${ctx.policyCounts.enabled}/${ctx.policyCounts.total} policies enforced \u2014 ${ctx.policyCounts.reportOnly} in report-only, ${ctx.policyCounts.disabled} disabled.`);
 
   const scoreTone = assessment.score >= 80 ? "positive" : assessment.score >= 65 ? "caution" : "critical";
@@ -2573,7 +2573,54 @@ async function main() {
   console.log(`Slides generated: ${ctx.slideNumber}`);
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+function __setShowRawIds(value) {
+  _skipGuidSanitize = Boolean(value);
+}
+
+module.exports = {
+  wrappedLines,
+  lineHeightIn,
+  charWidthIn,
+  measureCellHeight,
+  measureRowHeight,
+  measureTableHeight,
+  computeCalloutHeight,
+  estimateTableHeight,
+  chunk,
+  clamp,
+  hasValue,
+  pickFirst,
+  toArray,
+  cleanWhitespace,
+  humanizeIdentifier,
+  mapKnownLabel,
+  sanitizeText,
+  summarizeList,
+  normalizeDate,
+  normalizeState,
+  mapStateLabel,
+  mapStateTone,
+  isConfiguredValue,
+  getSeverityTone,
+  formatSignInFrequency,
+  normalizeGrantControls,
+  normalizeSessionControls,
+  normalizeUsers,
+  normalizeApplications,
+  normalizeConditions,
+  normalizePolicies,
+  collectActiveGrantControls,
+  collectActiveSessionControls,
+  inferAssessment,
+  deepMerge,
+  addTableWrapper,
+  main,
+  __setShowRawIds,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
